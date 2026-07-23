@@ -5,6 +5,10 @@ internal static class Program
 {
     private const BindingFlags InstanceFlags =
         BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+    private const BindingFlags StaticFlags =
+        BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+    private const string ProductionOnlineEndpoint =
+        "wss://dustexe-production.up.railway.app/ws";
 
     [STAThread]
     private static void Main(string[] args)
@@ -19,11 +23,16 @@ internal static class Program
 
         var gameAssembly = Assembly.Load("Dust");
         var gameType = gameAssembly.GetType("Dust.GameForm", throwOnError: true)!;
+        VerifyOnlineEndpoint(gameAssembly);
         using var form = (Form)Activator.CreateInstance(gameType)!;
         form.ClientSize = new Size(1280, 800);
         Field<System.Windows.Forms.Timer>(gameType, form, "_timer").Stop();
 
         var modeField = gameType.GetField("_mode", InstanceFlags)!;
+        gameType.GetMethod("OpenOnlinePlay", InstanceFlags)!.Invoke(form, null);
+        SaveFrame(gameType, form, Path.Combine(outputDirectory, "online-account.png"));
+        VerifyOnlineAccountNavigation(gameType, form);
+
         var playingMode = Enum.Parse(modeField.FieldType, "Playing");
         modeField.SetValue(form, playingMode);
         SetField(gameType, form, "_startedAt", DateTime.Now);
@@ -41,6 +50,10 @@ internal static class Program
 
         ((IList)FieldObject(gameType, form, "_hollows")).Clear();
         ((IList)FieldObject(gameType, form, "_sentries")).Clear();
+
+        VerifyDetectionFeedback(gameType, form);
+        SaveFrame(gameType, form, Path.Combine(outputDirectory, "detection-warning.png"));
+        VerifyCharacterAudio(gameAssembly, gameType, form);
 
         var switches = ((IEnumerable)FieldObject(gameType, form, "_circuitSwitches"))
             .Cast<object>().ToArray();
@@ -100,7 +113,102 @@ internal static class Program
         SaveFrame(gameType, form, Path.Combine(outputDirectory, "door-open.png"));
 
         Console.WriteLine(
-            "Objective QA passed: cargo replacement, distinct rooms, activation, transfer lock, and door states.");
+            "QA passed: embedded endpoint, account navigation, detection feedback, " +
+            "character audio, objectives, transfer lock, and door states.");
+    }
+
+    private static void VerifyOnlineEndpoint(Assembly gameAssembly)
+    {
+        var settingsType = gameAssembly.GetType("Dust.GameSettings", throwOnError: true)!;
+        var resolver = settingsType.GetMethod("ResolveOnlineServerUrl", StaticFlags)!;
+        Environment.SetEnvironmentVariable("DUST_ONLINE_SERVER_URL", null);
+        Require((string)resolver.Invoke(null, null)! == ProductionOnlineEndpoint,
+            "The default online endpoint is not the embedded Railway relay.");
+
+        Environment.SetEnvironmentVariable(
+            "DUST_ONLINE_SERVER_URL", "ws://127.0.0.1:5077/ws");
+        Require((string)resolver.Invoke(null, null)! == "ws://127.0.0.1:5077/ws",
+            "The developer loopback override was rejected.");
+
+        Environment.SetEnvironmentVariable(
+            "DUST_ONLINE_SERVER_URL", "ws://example.com/ws");
+        Require((string)resolver.Invoke(null, null)! == ProductionOnlineEndpoint,
+            "An insecure remote developer override was accepted.");
+        Environment.SetEnvironmentVariable("DUST_ONLINE_SERVER_URL", null);
+    }
+
+    private static void VerifyOnlineAccountNavigation(Type gameType, object form)
+    {
+        Require(Field<Array>(gameType, form, "_onlineAccountFields").Length == 2,
+            "The player-facing account screen still has a server-address field.");
+        Require(Field<string>(gameType, form, "_onlineServerAddress") == ProductionOnlineEndpoint,
+            "The account screen did not resolve the embedded production endpoint.");
+
+        var handler = gameType.GetMethod("HandleOnlineAccountKey", InstanceFlags)!;
+        SetField(gameType, form, "_onlineAccountFocus", 0);
+        handler.Invoke(form, [new KeyEventArgs(Keys.Shift | Keys.Tab)]);
+        Require(Field<int>(gameType, form, "_onlineAccountFocus") == 4,
+            "Account Shift+Tab navigation did not wrap to the Back button.");
+
+        SetField(gameType, form, "_onlineAccountFocus", 0);
+        handler.Invoke(form, [new KeyEventArgs(Keys.Enter)]);
+        Require(Field<int>(gameType, form, "_onlineAccountFocus") == 1,
+            "Enter did not advance from username to password.");
+        handler.Invoke(form, [new KeyEventArgs(Keys.Enter)]);
+        Require(Field<int>(gameType, form, "_onlineAccountFocus") == 2,
+            "Enter did not advance from password to Sign Up.");
+
+        SetField(gameType, form, "_onlineAccountFocus", 0);
+        for (var expected = 1; expected <= 4; expected++)
+        {
+            handler.Invoke(form, [new KeyEventArgs(Keys.Tab)]);
+            Require(Field<int>(gameType, form, "_onlineAccountFocus") == expected,
+                $"Account Tab navigation did not reach focus index {expected}.");
+        }
+        handler.Invoke(form, [new KeyEventArgs(Keys.Tab)]);
+        Require(Field<int>(gameType, form, "_onlineAccountFocus") == 0,
+            "Account Tab navigation did not wrap to the username field.");
+    }
+
+    private static void VerifyDetectionFeedback(Type gameType, object form)
+    {
+        SetField(gameType, form, "_warningFlash", 0f);
+        SetField(gameType, form, "_warningSoundCooldown", 0f);
+        gameType.GetMethod("TriggerOnlineDetectionWarning", InstanceFlags)!
+            .Invoke(form, [string.Empty]);
+        Require(Field<float>(gameType, form, "_warningFlash") > .8f,
+            "An offline Hollow detection did not trigger the exclamation flash.");
+        Require(Field<float>(gameType, form, "_warningSoundCooldown") > 0,
+            "An offline Hollow detection did not trigger the caught audio path.");
+    }
+
+    private static void VerifyCharacterAudio(Assembly gameAssembly, Type gameType, object form)
+    {
+        var resultLines = (IList)FieldObject(gameType, form, "_resultLines");
+        resultLines.Clear();
+        resultLines.Add("REPORT AUDIO");
+        SetField(gameType, form, "_resultAge", 0f);
+        SetField(gameType, form, "_resultAnimationTimestamp", 0L);
+        gameType.GetMethod("UpdateResultAnimation", InstanceFlags)!
+            .Invoke(form, [.12f]);
+
+        var audio = FieldObject(gameType, form, "_audio");
+        var audioType = audio.GetType();
+        var cueType = gameAssembly.GetType("Dust.AudioCue", throwOnError: true)!;
+        var typeCue = Enum.Parse(cueType, "Type");
+
+        var sounds = (IDictionary)FieldObject(audioType, audio, "_sounds");
+        var soundAsset = sounds[typeCue]!;
+        var mixer = FieldObject(soundAsset.GetType(), soundAsset, "_mixer");
+        var output = FieldObject(soundAsset.GetType(), soundAsset, "_mixerOutput");
+        if (mixer is null || output is null)
+            throw new InvalidOperationException(
+                "The report type cue did not initialize its polyphonic mixer.");
+
+        var inputs = ((IEnumerable)mixer.GetType().GetProperty("MixerInputs")!
+            .GetValue(mixer)!).Cast<object>().Count();
+        Require(inputs > 1,
+            "Rapid report type cues did not overlap in the polyphonic mixer.");
     }
 
     private static void SaveFrame(Type gameType, Form form, string path)

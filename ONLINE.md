@@ -26,19 +26,27 @@ Keep that window open while anyone is playing. Its `Data\accounts.json` file is
 created beneath the server folder and must remain with the server, never with
 the game client.
 
-Start two copies of `Dust.exe`. On each copy, choose **Online Play** and use:
+The public production address is embedded in `Dust.exe`, so local testing
+requires the developer-only `DUST_ONLINE_SERVER_URL` process override. From a
+PowerShell window in the repository root, launch two clients with:
 
-```text
-ws://127.0.0.1:5077/ws
+```powershell
+$env:DUST_ONLINE_SERVER_URL = "ws://127.0.0.1:5077/ws"
+Start-Process -FilePath .\publish\Dust.exe
+Start-Process -FilePath .\publish\Dust.exe
+Remove-Item Env:DUST_ONLINE_SERVER_URL
 ```
 
+On each copy, choose **Online Play** and enter only a username and password.
 Create a different account in each window, create a lobby in one, and join it
-from the other. This loopback address works only when the server and game are
-on the same PC.
+from the other.
 
-The client refuses to send a password over plaintext `ws://` to another
-computer. For a LAN test across multiple PCs, put the server behind a local TLS
-proxy and use its `wss://` address just as you would for an Internet deployment.
+`DUST_ONLINE_SERVER_URL` is intended only for developer testing and is not a
+player setting. It accepts a secure `wss://` address or plaintext `ws://` only
+when the target is loopback, such as `127.0.0.1` or `localhost`. The client
+refuses to send a password over plaintext `ws://` to another computer. For a
+multi-PC developer test, put the server behind TLS and override with its
+`wss://` address.
 
 ## Recommended Internet deployment: Railway
 
@@ -66,13 +74,16 @@ accounts beneath `/data`.
    ```
 
    A healthy server returns JSON whose `status` is `ok`.
-6. In Dust, choose **Online Play** and enter the same domain as a secure
-   WebSocket endpoint:
+6. The current game release already embeds its production WebSocket endpoint:
 
    ```text
-   wss://your-service.up.railway.app/ws
+   wss://dustexe-production.up.railway.app/ws
    ```
 
+   Players choose **Online Play** and enter only a username and password. If a
+   future production deployment uses a different domain, update the embedded
+   endpoint in the client source and publish a new `Dust.exe`; do not ask
+   players to configure it.
 7. Create the first account only after the `/data` volume is attached. Enable
    Railway volume backups if the accounts matter to you.
 
@@ -112,8 +123,9 @@ On a Windows or Linux server:
 3. Run the process as a service with automatic restart enabled.
 4. Put Caddy, nginx, or a cloud HTTPS load balancer in front of it.
 5. Point a domain at the server and forward WebSocket upgrades for `/ws`.
-6. Enter the resulting `wss://.../ws` address once in Dust's online connection
-   screen. Dust remembers the address and username, but never the password.
+6. Build the resulting `wss://.../ws` address into the production game client.
+   There is no player-facing server-address field; players enter only their
+   username and password.
 7. Back up `Data/accounts.json` and do not distribute it with the game.
 
 A minimal Caddy configuration is:
@@ -162,14 +174,15 @@ supported, lower-maintenance target for the current Dust server.
 
 ## What friends need
 
-Friends need only the published `Dust.exe` and the public
-`wss://dust.example.com/ws` address. They do not need the server executable,
-.NET, the account database, or any asset folders. Sending the EXE inside a ZIP
+Friends need only the published `Dust.exe`. The production server endpoint is
+already embedded, so they do not need an address, the server executable, .NET,
+the account database, or any asset folders. Sending the EXE inside a ZIP
 usually avoids messaging services renaming or stripping it.
 
-Each friend creates an account from the Online Play screen. Accounts belong to
-the particular Dust server on which they were created. If that server is
-replaced without preserving `Data/accounts.json`, those accounts are lost.
+Each friend creates an account from the Online Play screen using only a
+username and password. Accounts belong to the embedded Dust server. If that
+server is replaced without preserving `Data/accounts.json`, those accounts are
+lost.
 
 ## Operational notes
 

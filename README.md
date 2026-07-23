@@ -33,10 +33,11 @@ accepted checkpoint rather than allowing two peers to author the same run.
 Joining a run already in progress is disabled in this release.
 
 The account server stores salted PBKDF2 password hashes and never sends the
-account database to clients. The client remembers the username and server
-address, but never saves a password or resume token. A public deployment must
-use a `wss://` endpoint. See [ONLINE.md](ONLINE.md) for local testing, deployment,
-TLS, backups, and exactly what friends need.
+account database to clients. The production `wss://` endpoint is embedded in
+the game, so ordinary players only enter a username and password; there is no
+server-address field. The client remembers the username, but never saves a
+password or resume token. See [ONLINE.md](ONLINE.md) for developer-only local
+testing, deployment, TLS, backups, and exactly what friends need.
 
 ## Achievements and perks
 
@@ -93,8 +94,9 @@ dotnet publish OnlineServer\Dust.OnlineServer.csproj -c Release -o publish-serve
 dotnet publish-server\Dust.OnlineServer.dll
 ```
 
-The game and server are independent artifacts. Friends receive the game EXE;
-the server stays on the machine or cloud host you operate.
+The game and server are independent artifacts. Friends receive the game EXE
+and sign in with only a username and password; the embedded endpoint connects
+them to the server that stays on the cloud host you operate.
 
 For cloud hosting, the server is ready to deploy to Railway from the repository
 Dockerfile. Railway runs it independently of your computer, supplies the secure

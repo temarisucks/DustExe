@@ -3,6 +3,8 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics;
+using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 
 namespace Dust;
 
@@ -77,12 +79,6 @@ internal sealed class AudioManager : IDisposable
 
     public void Play(AudioCue cue)
     {
-        if (cue is AudioCue.Type or AudioCue.ShopVoice)
-        {
-            QueueCharacterVoice(cue);
-            return;
-        }
-
         lock (_sync)
         {
             if (_disposed || _volume <= 0 || !_sounds.TryGetValue(cue, out var sound)) return;
@@ -96,26 +92,6 @@ internal sealed class AudioManager : IDisposable
 
             sound.Play();
         }
-    }
-
-    private void QueueCharacterVoice(AudioCue cue)
-    {
-        if (Volatile.Read(ref _disposed) || Volatile.Read(ref _volume) <= 0) return;
-
-        // Character audio can arrive more than forty times per second. Starting
-        // a WinMM voice on the paint/timer thread makes the printer itself lag,
-        // so only the already-loaded voice trigger is dispatched to the pool.
-        ThreadPool.QueueUserWorkItem(static state =>
-        {
-            var (manager, queuedCue) = state;
-            SoundAsset? sound;
-            lock (manager._sync)
-            {
-                if (manager._disposed || manager._volume <= 0 ||
-                    !manager._sounds.TryGetValue(queuedCue, out sound)) return;
-            }
-            sound.Play();
-        }, (this, cue), preferLocal: false);
     }
 
     /// <summary>
@@ -489,6 +465,11 @@ internal sealed class AudioManager : IDisposable
         private readonly object _voiceSync = new();
         private readonly List<MemoryStream> _streams = [];
         private readonly List<SoundPlayer> _players = [];
+        private CachedWave? _cachedWave;
+        private MixingSampleProvider? _mixer;
+        private WaveOutEvent? _mixerOutput;
+        private float _polyphonicGain;
+        private bool _polyphonyUnavailable;
         private int _voiceCursor;
 
         public SoundAsset(byte[] source, float trim, int voiceCount)
@@ -502,6 +483,27 @@ internal sealed class AudioManager : IDisposable
         {
             lock (_voiceSync)
             {
+                if (_voiceCount > 1)
+                {
+                    _polyphonicGain = Math.Clamp(gain * _trim, 0f, 1f);
+                    _polyphonyUnavailable = false;
+                    if (_polyphonicGain <= 0)
+                    {
+                        DisposePolyphonyCore();
+                        return;
+                    }
+                    try
+                    {
+                        EnsurePolyphonyCore();
+                    }
+                    catch
+                    {
+                        DisposePolyphonyCore();
+                        _polyphonyUnavailable = true;
+                    }
+                    return;
+                }
+
                 DisposePlayersCore();
                 try
                 {
@@ -524,6 +526,27 @@ internal sealed class AudioManager : IDisposable
 
         public void Play()
         {
+            if (_voiceCount > 1)
+            {
+                lock (_voiceSync)
+                {
+                    if (_polyphonyUnavailable || _polyphonicGain <= 0) return;
+                    try
+                    {
+                        EnsurePolyphonyCore();
+                        if (_mixer is not null && _cachedWave is not null)
+                            _mixer.AddMixerInput(
+                                new CachedWaveProvider(_cachedWave, _polyphonicGain));
+                    }
+                    catch
+                    {
+                        DisposePolyphonyCore();
+                        _polyphonyUnavailable = true;
+                    }
+                }
+                return;
+            }
+
             SoundPlayer? player;
             lock (_voiceSync)
             {
@@ -542,7 +565,11 @@ internal sealed class AudioManager : IDisposable
 
         public void Dispose()
         {
-            lock (_voiceSync) DisposePlayersCore();
+            lock (_voiceSync)
+            {
+                DisposePlayersCore();
+                DisposePolyphonyCore();
+            }
         }
 
         private void DisposePlayersCore()
@@ -556,6 +583,74 @@ internal sealed class AudioManager : IDisposable
             _players.Clear();
             _streams.Clear();
             _voiceCursor = 0;
+        }
+
+        private void EnsurePolyphonyCore()
+        {
+            if (_mixerOutput is not null && _mixer is not null && _cachedWave is not null)
+            {
+                if (_mixerOutput.PlaybackState != PlaybackState.Playing)
+                    _mixerOutput.Play();
+                return;
+            }
+
+            using var stream = new MemoryStream(_source, writable: false);
+            using var reader = new WaveFileReader(stream);
+            var sourceProvider = reader.ToSampleProvider();
+            var samples = new List<float>();
+            var buffer = new float[4096];
+            int read;
+            while ((read = sourceProvider.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                for (var index = 0; index < read; index++)
+                    samples.Add(buffer[index]);
+            }
+
+            _cachedWave = new CachedWave(sourceProvider.WaveFormat, samples.ToArray());
+            _mixer = new MixingSampleProvider(_cachedWave.WaveFormat)
+            {
+                ReadFully = true
+            };
+            _mixerOutput = new WaveOutEvent
+            {
+                DesiredLatency = 60,
+                NumberOfBuffers = 3
+            };
+            _mixerOutput.Init(new SampleToWaveProvider16(_mixer));
+            _mixerOutput.Play();
+        }
+
+        private void DisposePolyphonyCore()
+        {
+            try { _mixer?.RemoveAllMixerInputs(); }
+            catch { }
+            if (_mixerOutput is not null)
+            {
+                try { _mixerOutput.Stop(); }
+                catch { }
+                _mixerOutput.Dispose();
+            }
+            _mixerOutput = null;
+            _mixer = null;
+            _cachedWave = null;
+        }
+
+        private sealed record CachedWave(WaveFormat WaveFormat, float[] Samples);
+
+        private sealed class CachedWaveProvider(CachedWave wave, float gain) : ISampleProvider
+        {
+            private int _position;
+
+            public WaveFormat WaveFormat => wave.WaveFormat;
+
+            public int Read(float[] buffer, int offset, int count)
+            {
+                var available = Math.Min(count, wave.Samples.Length - _position);
+                for (var index = 0; index < available; index++)
+                    buffer[offset + index] = wave.Samples[_position + index] * gain;
+                _position += available;
+                return available;
+            }
         }
     }
 

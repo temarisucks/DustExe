@@ -25,7 +25,7 @@ internal sealed partial class GameForm
     private readonly ConcurrentQueue<Action> _onlineUiQueue = new();
     private readonly ConcurrentDictionary<string, TaskCompletionSource<OnlineMessage>>
         _onlineResponseWaiters = new(StringComparer.Ordinal);
-    private readonly RectangleF[] _onlineAccountFields = new RectangleF[3];
+    private readonly RectangleF[] _onlineAccountFields = new RectangleF[2];
     private readonly RectangleF[] _onlineAccountButtons = new RectangleF[3];
     private readonly RectangleF[] _onlineLobbyRows = new RectangleF[VisibleLobbyRows];
     private readonly RectangleF[] _onlineBrowserButtons = new RectangleF[4];
@@ -69,7 +69,7 @@ internal sealed partial class GameForm
     private void InitializeOnlineUi()
     {
         _onlineAccountUsername = _settings.LastOnlineUsername;
-        _onlineServerAddress = _settings.OnlineServerUrl;
+        _onlineServerAddress = GameSettings.ResolveOnlineServerUrl();
         _onlineClient.MessageReceived += message =>
             _onlineUiQueue.Enqueue(() => HandleOnlineMessage(message));
         _onlineClient.ConnectionClosed += reason =>
@@ -145,7 +145,7 @@ internal sealed partial class GameForm
 
         _mode = ScreenMode.OnlineAccount;
         _onlineAccountUsername = _settings.LastOnlineUsername;
-        _onlineServerAddress = _settings.OnlineServerUrl;
+        _onlineServerAddress = GameSettings.ResolveOnlineServerUrl();
         _onlineAccountPassword = string.Empty;
         _onlineAccountFocus = string.IsNullOrWhiteSpace(_onlineAccountUsername) ? 0 : 1;
         _onlineStatus = "ENTER ACCOUNT CREDENTIALS";
@@ -153,7 +153,7 @@ internal sealed partial class GameForm
 
     private void HandleOnlineKeyPress(object? sender, KeyPressEventArgs e)
     {
-        if (_mode == ScreenMode.OnlineAccount && _onlineAccountFocus < 3)
+        if (_mode == ScreenMode.OnlineAccount && _onlineAccountFocus < 2)
         {
             if (char.IsControl(e.KeyChar)) return;
             switch (_onlineAccountFocus)
@@ -164,10 +164,6 @@ internal sealed partial class GameForm
                     break;
                 case 1 when e.KeyChar is >= ' ' and <= '~' && _onlineAccountPassword.Length < 128:
                     _onlineAccountPassword += e.KeyChar;
-                    e.Handled = true;
-                    break;
-                case 2 when e.KeyChar is >= '!' and <= '~' && _onlineServerAddress.Length < 256:
-                    _onlineServerAddress += e.KeyChar;
                     e.Handled = true;
                     break;
             }
@@ -191,31 +187,31 @@ internal sealed partial class GameForm
         else if (e.KeyCode == Keys.Tab)
         {
             var direction = e.Shift ? -1 : 1;
-            _onlineAccountFocus = Wrap(_onlineAccountFocus + direction, 6);
+            _onlineAccountFocus = Wrap(_onlineAccountFocus + direction, 5);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode == Keys.Up ||
-                 _onlineAccountFocus >= 3 && e.KeyCode == Keys.W)
+                 _onlineAccountFocus >= 2 && e.KeyCode == Keys.W)
         {
-            _onlineAccountFocus = Wrap(_onlineAccountFocus - 1, 6);
+            _onlineAccountFocus = Wrap(_onlineAccountFocus - 1, 5);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode == Keys.Down ||
-                 _onlineAccountFocus >= 3 && e.KeyCode == Keys.S)
+                 _onlineAccountFocus >= 2 && e.KeyCode == Keys.S)
         {
-            _onlineAccountFocus = Wrap(_onlineAccountFocus + 1, 6);
+            _onlineAccountFocus = Wrap(_onlineAccountFocus + 1, 5);
             _audio.Play(AudioCue.Select);
         }
-        else if (e.KeyCode == Keys.Back && _onlineAccountFocus < 3)
+        else if (e.KeyCode == Keys.Back && _onlineAccountFocus < 2)
         {
             BackspaceOnlineAccountField();
         }
-        else if (e.Control && e.KeyCode == Keys.V && _onlineAccountFocus < 3)
+        else if (e.Control && e.KeyCode == Keys.V && _onlineAccountFocus < 2)
         {
             PasteOnlineAccountField();
         }
         else if (e.KeyCode == Keys.Enter ||
-                 e.KeyCode == Keys.Space && _onlineAccountFocus >= 3)
+                 e.KeyCode == Keys.Space && _onlineAccountFocus >= 2)
         {
             ActivateOnlineAccountSelection();
         }
@@ -368,7 +364,7 @@ internal sealed partial class GameForm
             for (var index = 0; index < _onlineAccountButtons.Length; index++)
             {
                 if (!_onlineAccountButtons[index].Contains(hit)) continue;
-                _onlineAccountFocus = 3 + index;
+                _onlineAccountFocus = 2 + index;
                 ActivateOnlineAccountSelection();
                 return true;
             }
@@ -438,19 +434,18 @@ internal sealed partial class GameForm
                 _audio.Play(AudioCue.Select);
                 break;
             case 1:
-            case 2:
-                _onlineAccountFocus = 3;
+                _onlineAccountFocus = 2;
                 _audio.Play(AudioCue.Select);
                 break;
-            case 3:
+            case 2:
                 _audio.Play(AudioCue.Confirm);
                 BeginOnlineAuthentication(signup: true);
                 break;
-            case 4:
+            case 3:
                 _audio.Play(AudioCue.Confirm);
                 BeginOnlineAuthentication(signup: false);
                 break;
-            case 5:
+            case 4:
                 _audio.Play(AudioCue.Confirm);
                 ExitOnlineToTitle();
                 break;
@@ -601,7 +596,8 @@ internal sealed partial class GameForm
     {
         var username = _onlineAccountUsername.Trim();
         var password = _onlineAccountPassword;
-        var address = _onlineServerAddress.Trim();
+        _onlineServerAddress = GameSettings.ResolveOnlineServerUrl();
+        var address = _onlineServerAddress;
         if (username.Length is < 3 or > 20 || username.Any(character => !IsUsernameCharacter(character)))
         {
             _onlineStatus = "USERNAME: 3-20 LETTERS NUMBERS _ -";
@@ -625,9 +621,7 @@ internal sealed partial class GameForm
         }
 
         _settings.LastOnlineUsername = username;
-        _settings.OnlineServerUrl = endpoint.AbsoluteUri.TrimEnd('/');
         _onlineAccountUsername = username;
-        _onlineServerAddress = _settings.OnlineServerUrl;
         QueueSettingsSave();
 
         _onlineExpectedDisconnect = false;
@@ -1336,16 +1330,13 @@ internal sealed partial class GameForm
         DrawPanelBolts(g, form, C.Steel);
         LabFont.Draw(g, "IDENTITY ENTRY", form.X + 28, form.Y + 24, 2, C.Signal);
 
-        _onlineAccountFields[0] = new RectangleF(form.X + 28, form.Y + 68, form.Width - 56, 86);
-        _onlineAccountFields[1] = new RectangleF(form.X + 28, form.Y + 170, form.Width - 56, 86);
-        _onlineAccountFields[2] = new RectangleF(form.X + 28, form.Y + 272, form.Width - 56, 72);
+        _onlineAccountFields[0] = new RectangleF(form.X + 28, form.Y + 82, form.Width - 56, 96);
+        _onlineAccountFields[1] = new RectangleF(form.X + 28, form.Y + 210, form.Width - 56, 96);
         DrawOnlineTextField(g, _onlineAccountFields[0], "USERNAME",
             OnlineDisplay(_onlineAccountUsername, 34), _onlineAccountFocus == 0, _onlineHover == 0);
         DrawOnlineTextField(g, _onlineAccountFields[1], "PASSWORD",
             new string('*', Math.Min(40, _onlineAccountPassword.Length)),
             _onlineAccountFocus == 1, _onlineHover == 1);
-        DrawOnlineTextField(g, _onlineAccountFields[2], "ADVANCED CONNECTION",
-            OnlineDisplayTail(_onlineServerAddress, 46), _onlineAccountFocus == 2, _onlineHover == 2);
 
         LabFont.Draw(g, OnlineDisplay(_onlineStatus, 52), form.X + 28, form.Bottom - 86, 1,
             _onlineBusy || _onlineReconnecting ? C.Signal : C.Sick);
@@ -1355,10 +1346,10 @@ internal sealed partial class GameForm
         _onlineAccountButtons[0] = new RectangleF(478, 650, 260, 62);
         _onlineAccountButtons[1] = new RectangleF(754, 650, 238, 62);
         _onlineAccountButtons[2] = new RectangleF(1008, 650, 180, 62);
-        DrawOnlineButton(g, _onlineAccountButtons[0], "SIGN UP", _onlineAccountFocus == 3, _onlineHover == 10);
-        DrawOnlineButton(g, _onlineAccountButtons[1], "LOG IN", _onlineAccountFocus == 4, _onlineHover == 11);
-        DrawAbortButton(g, _onlineAccountButtons[2], "BACK", _onlineAccountFocus == 5 || _onlineHover == 12);
-        if (_onlineAccountFocus == 5) DrawKeyboardFocusMarker(g, _onlineAccountButtons[2]);
+        DrawOnlineButton(g, _onlineAccountButtons[0], "SIGN UP", _onlineAccountFocus == 2, _onlineHover == 10);
+        DrawOnlineButton(g, _onlineAccountButtons[1], "LOG IN", _onlineAccountFocus == 3, _onlineHover == 11);
+        DrawAbortButton(g, _onlineAccountButtons[2], "BACK", _onlineAccountFocus == 4 || _onlineHover == 12);
+        if (_onlineAccountFocus == 4) DrawKeyboardFocusMarker(g, _onlineAccountButtons[2]);
     }
 
     private RectangleF _onlineSearchField;
@@ -1598,9 +1589,6 @@ internal sealed partial class GameForm
             case 1 when _onlineAccountPassword.Length > 0:
                 _onlineAccountPassword = _onlineAccountPassword[..^1];
                 break;
-            case 2 when _onlineServerAddress.Length > 0:
-                _onlineServerAddress = _onlineServerAddress[..^1];
-                break;
         }
     }
 
@@ -1621,11 +1609,6 @@ internal sealed partial class GameForm
                     _onlineAccountPassword = new string(
                         (_onlineAccountPassword + text)
                         .Where(character => character is >= ' ' and <= '~').Take(128).ToArray());
-                    break;
-                case 2:
-                    _onlineServerAddress = new string(
-                        (_onlineServerAddress + text)
-                        .Where(character => character is >= '!' and <= '~').Take(256).ToArray());
                     break;
             }
         }

@@ -1138,7 +1138,9 @@ internal sealed partial class GameForm
 
     private void TriggerOnlineDetectionWarning(string? playerId)
     {
-        if (playerId == _onlinePlayerId) TriggerDetectionWarning();
+        if (!IsOnlineGameplayActive ||
+            string.Equals(playerId, _onlinePlayerId, StringComparison.Ordinal))
+            TriggerDetectionWarning();
     }
 
     private OnlineWorldSnapshot BuildOnlineSnapshot()

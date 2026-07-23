@@ -24,6 +24,19 @@ connects to:
 ws://127.0.0.1:5077/ws
 ```
 
+The production client has its public endpoint embedded and has no
+server-address field. For developer-only local testing, launch the game from a
+PowerShell process with the loopback override set:
+
+```powershell
+$env:DUST_ONLINE_SERVER_URL = "ws://127.0.0.1:5077/ws"
+Start-Process -FilePath .\publish\Dust.exe
+Remove-Item Env:DUST_ONLINE_SERVER_URL
+```
+
+The override accepts secure `wss://` endpoints, or plaintext `ws://` only for
+loopback targets. Players should never need to set it.
+
 Health information is available at `http://127.0.0.1:5077/health`.
 
 To build a deployable framework-dependent directory:
@@ -43,8 +56,9 @@ server. From a repository whose root is the `Dust` folder:
 2. Attach a persistent volume at `/data`.
 3. Keep one replica.
 4. Generate a public HTTP domain.
-5. Verify `https://<domain>/health`, then configure Dust with
-   `wss://<domain>/ws`.
+5. Verify `https://<domain>/health`. The current Dust release already embeds
+   `wss://dustexe-production.up.railway.app/ws`; players enter only a username
+   and password.
 
 The process honors Railway's injected `PORT`; do not override it. Railway
 terminates TLS at its edge while the container listens on HTTP internally.
@@ -59,7 +73,7 @@ service Root Directory to `/Dust` and Config File Path to
 
 Passwords are sent during signup/login, so an Internet-facing server **must use
 TLS**. Put the service behind a TLS reverse proxy such as Caddy, nginx, or a
-cloud load balancer, and configure the Dust client with:
+cloud load balancer. A custom production build must embed an endpoint such as:
 
 ```text
 wss://dust.example.com/ws
@@ -75,8 +89,9 @@ On the hosting side:
    crash/reboot.
 5. Either open TCP port `5077`, or preferably bind it to localhost and expose
    only HTTPS port `443` through a reverse proxy.
-6. Point a domain name at the server, enable TLS, then put its `wss://` endpoint
-   into the game client's production configuration.
+6. Point a domain name at the server, enable TLS, then embed its `wss://`
+   endpoint in the production game client. Do not expose a server-address field
+   to players.
 7. Back up `Data/accounts.json`. It contains salted password hashes, not plain
    passwords, but it is still sensitive server data.
 

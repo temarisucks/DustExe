@@ -7,7 +7,9 @@ internal sealed class GameSettings
 {
     internal const int DefaultDroneCoreArgb = unchecked((int)0xFF77C598);
     internal const int DefaultDroneFrameArgb = unchecked((int)0xFFB5B897);
-    internal const string DefaultOnlineServerUrl = "ws://127.0.0.1:5077/ws";
+    internal const string DefaultOnlineServerUrl =
+        "wss://dustexe-production.up.railway.app/ws";
+    private const string OnlineServerOverrideVariable = "DUST_ONLINE_SERVER_URL";
 
     public int Brightness { get; set; } = 100;
     public int Volume { get; set; } = 80;
@@ -39,7 +41,10 @@ internal sealed class GameSettings
 
         DroneCoreArgb = NormalizeOpaqueArgb(DroneCoreArgb, DefaultDroneCoreArgb);
         DroneFrameArgb = NormalizeOpaqueArgb(DroneFrameArgb, DefaultDroneFrameArgb);
-        OnlineServerUrl = NormalizeOnlineServerUrl(OnlineServerUrl);
+        // Ordinary players always use Dust's production relay. Keeping the
+        // serialized value normalized also migrates older localhost or
+        // accidentally incomplete addresses on the next settings save.
+        OnlineServerUrl = DefaultOnlineServerUrl;
         LastOnlineUsername = NormalizeOnlineUsername(LastOnlineUsername);
         Progression ??= new ProgressionProfile();
         Progression.Normalize();
@@ -108,12 +113,14 @@ internal sealed class GameSettings
         return alpha == byte.MaxValue ? argb : fallback;
     }
 
-    private static string NormalizeOnlineServerUrl(string? value)
+    internal static string ResolveOnlineServerUrl()
     {
-        var candidate = (value ?? string.Empty).Trim();
+        var candidate = (Environment.GetEnvironmentVariable(OnlineServerOverrideVariable)
+                         ?? string.Empty).Trim();
         if (candidate.Length > 256 ||
             !Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
-            uri.Scheme is not ("ws" or "wss"))
+            uri.Scheme is not ("ws" or "wss") ||
+            uri.Scheme == "ws" && !uri.IsLoopback)
             return DefaultOnlineServerUrl;
         return uri.AbsoluteUri.TrimEnd('/');
     }
