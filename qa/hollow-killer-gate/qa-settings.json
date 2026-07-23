@@ -1,0 +1,29 @@
+{
+  "Brightness": 100,
+  "Volume": 0,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 0,
+  "DroneModel": 0,
+  "DroneCoreArgb": -8927848,
+  "DroneFrameArgb": -4867945,
+  "Progression": {
+    "AchievementStates": [
+      {
+        "Id": 2,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:28:34.217647+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 16,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T20:00:00+00:00",
+        "Progress": 1
+      }
+    ],
+    "EquippedPerks": [],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  }
+}

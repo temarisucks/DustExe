@@ -1,0 +1,16 @@
+{
+  "Brightness": 100,
+  "Volume": 80,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 0,
+  "DroneModel": 4,
+  "DroneCoreArgb": -11564110,
+  "DroneFrameArgb": -5151680,
+  "Progression": {
+    "AchievementStates": [],
+    "EquippedPerks": [],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  }
+}

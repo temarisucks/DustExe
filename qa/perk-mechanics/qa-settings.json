@@ -1,0 +1,104 @@
+{
+  "Brightness": 100,
+  "Volume": 0,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 0,
+  "DroneModel": 0,
+  "DroneCoreArgb": -8927848,
+  "DroneFrameArgb": -4867945,
+  "Progression": {
+    "AchievementStates": [
+      {
+        "Id": 1,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3633728+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 2,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3646099+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 3,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3646115+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 4,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3646122+00:00",
+        "Progress": 15
+      },
+      {
+        "Id": 5,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647861+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 6,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647869+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 7,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647873+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 8,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647876+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 9,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647962+00:00",
+        "Progress": 3
+      },
+      {
+        "Id": 10,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647965+00:00",
+        "Progress": 10
+      },
+      {
+        "Id": 11,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647968+00:00",
+        "Progress": 180
+      },
+      {
+        "Id": 12,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.364797+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 13,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-22T23:00:03.3647973+00:00",
+        "Progress": 100
+      }
+    ],
+    "EquippedPerks": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7
+    ],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  },
+  "CurrentWinStreak": 0,
+  "BestWinStreak": 0
+}

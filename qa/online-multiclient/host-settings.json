@@ -1,0 +1,18 @@
+{
+  "Brightness": 100,
+  "Volume": 80,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 0,
+  "DroneModel": 0,
+  "DroneCoreArgb": -8927848,
+  "DroneFrameArgb": -4867945,
+  "OnlineServerUrl": "ws://127.0.0.1:5077/ws",
+  "LastOnlineUsername": "H777858",
+  "Progression": {
+    "AchievementStates": [],
+    "EquippedPerks": [],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  }
+}
