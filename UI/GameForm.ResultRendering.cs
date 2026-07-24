@@ -100,9 +100,6 @@ internal sealed partial class GameForm
 
         LabFont.Draw(g, $"ACCOUNT BEFORE  {_creditsBeforeJob:000000}", _mazeRect.X + 34,
             _mazeRect.Bottom - 42, 1, C.Steel);
-        if (ResultReady)
-            LabFont.Draw(g, "LEFT RIGHT  SELECT / ENTER  CONFIRM", _mazeRect.Right - 36,
-                _mazeRect.Bottom - 42, 1, C.Signal, LabTextAlign.Right);
     }
 
     private static void DrawResultBloodstain(Graphics g, RectangleF band, float reveal)

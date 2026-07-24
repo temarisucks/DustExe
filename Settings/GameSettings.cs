@@ -5,6 +5,9 @@ namespace Dust;
 
 internal sealed class GameSettings
 {
+    // Increment this only when a substantially revised tutorial should be
+    // offered once to every existing profile as well as new installations.
+    internal const int CurrentTutorialVersion = 1;
     internal const int DefaultDroneCoreArgb = unchecked((int)0xFF77C598);
     internal const int DefaultDroneFrameArgb = unchecked((int)0xFFB5B897);
     internal const string DefaultOnlineServerUrl =
@@ -21,7 +24,12 @@ internal sealed class GameSettings
     public int DroneFrameArgb { get; set; } = DefaultDroneFrameArgb;
     public string OnlineServerUrl { get; set; } = DefaultOnlineServerUrl;
     public string LastOnlineUsername { get; set; } = string.Empty;
+    public int TutorialOfferVersion { get; set; }
+    public int TutorialCompletedVersion { get; set; }
     public ProgressionProfile Progression { get; set; } = new();
+
+    [JsonIgnore]
+    public bool ShouldOfferCurrentTutorial => TutorialOfferVersion < CurrentTutorialVersion;
 
     [JsonIgnore]
     public int CurrentWinStreak => Progression.CurrentWinStreak;
@@ -46,6 +54,8 @@ internal sealed class GameSettings
         // accidentally incomplete addresses on the next settings save.
         OnlineServerUrl = DefaultOnlineServerUrl;
         LastOnlineUsername = NormalizeOnlineUsername(LastOnlineUsername);
+        TutorialOfferVersion = Math.Max(0, TutorialOfferVersion);
+        TutorialCompletedVersion = Math.Clamp(TutorialCompletedVersion, 0, TutorialOfferVersion);
         Progression ??= new ProgressionProfile();
         Progression.Normalize();
     }

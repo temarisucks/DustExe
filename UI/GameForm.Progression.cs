@@ -67,8 +67,6 @@ internal sealed partial class GameForm
 
         _backButton = new RectangleF(72, 666, 188, 56);
         DrawAbortButton(g, _backButton, "BACK", _hoverBack);
-        LabFont.Draw(g, "LEFT RIGHT  CHANGE BANK", 292, 678, 1, C.Sick);
-        LabFont.Draw(g, "UP DOWN  INDEX", 292, 702, 1, C.Steel);
         if (_progressionNoticeTimer > 0)
             LabFont.Draw(g, _progressionNotice, 1188, 690, 1,
                 _progressionNotice.Contains("LOCKED", StringComparison.Ordinal) ? C.Oxide : C.Signal,
@@ -215,11 +213,12 @@ internal sealed partial class GameForm
         DrawCutPanel(g, rect,
             equipped ? Color.FromArgb(49, 53, 39) : Color.FromArgb(9, 15, 15),
             focused || hovered ? C.Signal : equipped ? C.Sick : C.Steel, 7, focused ? 3 : 2);
-        using var socket = new SolidBrush(equipped ? C.Signal : available ? C.Sick : C.Deep);
-        g.FillRectangle(socket, rect.X + 11, rect.Y + 12, 22, 26);
-        using var voidBrush = new SolidBrush(C.Ink);
-        g.FillRectangle(voidBrush, rect.X + 17, rect.Y + 17, 10, 16);
-        LabFont.Draw(g, $"P{index + 1:00}", rect.X + 46, rect.Y + 18, 1, C.Steel);
+        var iconSocket = new RectangleF(rect.X + 9, rect.Y + 7, 36, 36);
+        DrawCutPanel(g, iconSocket, Color.FromArgb(226, C.Ink),
+            equipped ? C.Signal : available ? C.Sick : C.Steel, 5, equipped ? 2 : 1);
+        DrawPerkGlyph(g, definition.Id, RectangleF.Inflate(iconSocket, -6, -6),
+            equipped ? C.Signal : available ? C.Bone : C.Steel);
+        LabFont.Draw(g, $"P{index + 1:00}", rect.X + 53, rect.Y + 18, 1, C.Steel);
         LabFont.Draw(g, definition.Name.ToUpperInvariant(), rect.X + 92, rect.Y + 11, 2,
             available ? C.Bone : C.Steel);
         LabFont.Draw(g, equipped ? "EQUIPPED" : available ? "AVAILABLE" : "LOCKED",
@@ -238,7 +237,7 @@ internal sealed partial class GameForm
         LabFont.Draw(g, "SUBJECT MODIFICATION", rect.X + 27, rect.Y + 31, 1, C.Steel);
         LabFont.Draw(g, definition.Name.ToUpperInvariant(), rect.X + 27, rect.Y + 70, 3,
             available ? C.Bone : C.Steel);
-        LabFont.Draw(g, definition.Activation == PerkActivation.Space ? "CHANNEL / SPACE" : "CHANNEL / PASSIVE",
+        LabFont.Draw(g, definition.Activation == PerkActivation.Space ? "CHANNEL / ACTIVE" : "CHANNEL / PASSIVE",
             rect.X + 27, rect.Y + 120, 1, definition.Activation == PerkActivation.Space ? C.Signal : C.Sick);
 
         var lineY = rect.Y + 165;
@@ -259,7 +258,7 @@ internal sealed partial class GameForm
                 cleared ? C.Signal : C.Oxide);
         }
         if (definition.Activation == PerkActivation.Space)
-            LabFont.Draw(g, "ONE SPACE CHANNEL MAY BE FITTED", rect.X + 27,
+            LabFont.Draw(g, "ONE ACTIVE CHANNEL MAY BE FITTED", rect.X + 27,
                 rect.Y + 354, 1, C.Oxide);
 
         _progressionToggleButton = new RectangleF(rect.X + 27, rect.Bottom - 61, rect.Width - 54, 42);

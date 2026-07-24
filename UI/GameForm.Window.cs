@@ -36,6 +36,7 @@ internal sealed partial class GameForm
 
     private void ResetHover()
     {
+        ResetTutorialHover();
         _hoverMenu = -1;
         _hoverRunSetting = -1;
         _hoverRunStart = false;

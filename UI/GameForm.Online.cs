@@ -1465,8 +1465,6 @@ internal sealed partial class GameForm
         }
         LabFont.Draw(g, OnlineDisplay(_onlineStatus, 44), 72, 671, 1,
             _onlineBusy || _onlineReconnecting ? C.Signal : C.Sick);
-        LabFont.Draw(g, "TAB CHANGES CONTROL   ENTER CONFIRMS", 1188, 694, 1,
-            C.Steel, LabTextAlign.Right);
     }
 
     private void DrawLobbyRoomConsole(Graphics g)
@@ -1545,8 +1543,6 @@ internal sealed partial class GameForm
         if (_onlineLobbySelection == 9) DrawKeyboardFocusMarker(g, _onlineLobbyButtons[1]);
         LabFont.Draw(g, OnlineDisplay(_onlineStatus, 44), 72, 671, 1,
             _onlineBusy || _onlineReconnecting ? C.Signal : C.Sick);
-        if (CanEditOnlineLobby)
-            LabFont.Draw(g, "ARROWS ADJUST   ENTER APPLY", 72, 697, 1, C.Steel);
     }
 
     private void DrawOnlineTextField(

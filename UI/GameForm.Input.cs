@@ -14,6 +14,12 @@ internal sealed partial class GameForm
 
         switch (_mode)
         {
+            case ScreenMode.TutorialOffer:
+                HandleTutorialOfferKey(e);
+                break;
+            case ScreenMode.Tutorial:
+                HandleTutorialKey(e);
+                break;
             case ScreenMode.Title:
                 HandleTitleKey(e);
                 break;
@@ -290,6 +296,10 @@ internal sealed partial class GameForm
 
         switch (_mode)
         {
+            case ScreenMode.TutorialOffer:
+            case ScreenMode.Tutorial:
+                HandleTutorialMouseMove(hit);
+                break;
             case ScreenMode.Title:
                 for (var i = 0; i < _titleButtons.Length; i++)
                     if (_titleButtons[i].Contains(hit)) _hoverMenu = i;
@@ -355,7 +365,11 @@ internal sealed partial class GameForm
         if (_closeButton.Contains(hit)) { Close(); return; }
         if (_minButton.Contains(hit)) { WindowState = FormWindowState.Minimized; return; }
 
-        if (_mode == ScreenMode.Title)
+        if (_mode is ScreenMode.TutorialOffer or ScreenMode.Tutorial)
+        {
+            if (HandleTutorialMouseDown(hit)) return;
+        }
+        else if (_mode == ScreenMode.Title)
         {
             for (var i = 0; i < _titleButtons.Length; i++)
             {
@@ -582,6 +596,11 @@ internal sealed partial class GameForm
 
     private int CurrentHoverToken()
     {
+        if (_hoverTutorialOffer >= 0) return 10 + _hoverTutorialOffer;
+        if (_hoverTutorialDirection >= 0) return 20 + _hoverTutorialDirection;
+        if (_hoverTutorialInput) return 25;
+        if (_hoverTutorialAdvance) return 26;
+        if (_hoverTutorialLeave) return 27;
         if (_hoverMenu >= 0) return 100 + _hoverMenu;
         if (_hoverRunSetting >= 0) return 150 + _hoverRunSetting;
         if (_hoverRunStart) return 160;

@@ -13,6 +13,8 @@ internal enum DroneModel
 internal enum DronePaintPart { Core, Frame }
 internal enum ScreenMode
 {
+    TutorialOffer,
+    Tutorial,
     Title,
     RunSettings,
     Customize,
@@ -197,6 +199,7 @@ internal sealed partial class GameForm : Form
         {
             _windowedBounds = Bounds;
             ApplyDisplaySettings(recenter: false);
+            OfferTutorialOnFirstShown();
             RequestMenuMusic();
         };
         FormClosed += (_, _) => SaveSettings();

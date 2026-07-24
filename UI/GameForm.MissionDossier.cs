@@ -65,17 +65,73 @@ internal sealed partial class GameForm
 
     private void DrawMissionDossierButton(Graphics g)
     {
-        _missionDossierButton = new RectangleF(_mazeRect.X + 15, _mazeRect.Y + 82, 176, 40);
+        // A physical evidence-folder glyph keeps the control compact and
+        // language-free. It lives directly below the telemetry plate instead
+        // of reading like another HUD panel.
+        _missionDossierButton = new RectangleF(_mazeRect.X + 15, _mazeRect.Y + 81, 48, 48);
         var rect = _missionDossierButton;
         var hovered = _hoverMissionDossier;
         using var shadow = new SolidBrush(Color.FromArgb(205, Color.Black));
-        using var fill = new SolidBrush(hovered ? Color.FromArgb(79, 73, 53) : C.Ink);
-        using var edge = new Pen(hovered ? C.Signal : C.Steel, 3);
-        g.FillRectangle(shadow, rect.X + 5, rect.Y + 5, rect.Width, rect.Height);
-        g.FillRectangle(fill, rect);
-        g.DrawRectangle(edge, rect.X, rect.Y, rect.Width, rect.Height);
-        LabFont.Draw(g, "DOSSIER  [Q]", rect.X + rect.Width / 2, rect.Y + 13, 2,
-            hovered ? C.Signal : C.Bone, LabTextAlign.Center, 0);
+        g.FillPolygon(shadow, CutPanelPoints(
+            new RectangleF(rect.X + 5, rect.Y + 5, rect.Width, rect.Height), 6));
+        DrawCutPanel(g, rect,
+            hovered ? Color.FromArgb(69, 62, 44) : Color.FromArgb(224, C.Ink),
+            hovered ? C.Signal : C.Steel, 6, hovered ? 3 : 2);
+
+        // Two small mounting marks make the icon feel like a dedicated
+        // hardware key without increasing its clickable footprint.
+        using var mount = new SolidBrush(hovered ? C.Bone : C.Oxide);
+        g.FillRectangle(mount, rect.X + 5, rect.Y + 8, 3, 3);
+        g.FillRectangle(mount, rect.Right - 8, rect.Bottom - 11, 3, 3);
+
+        DrawMissionDossierIcon(g, rect, hovered);
+    }
+
+    private static void DrawMissionDossierIcon(Graphics g, RectangleF button, bool active)
+    {
+        var x = button.X + 9;
+        var y = button.Y + 7;
+        var accent = active ? C.Signal : Color.FromArgb(181, 158, 99);
+
+        // A loose report page protrudes from a worn, tabbed field folder.
+        using var pageShadow = new SolidBrush(Color.FromArgb(180, Color.Black));
+        using var page = new SolidBrush(active ? C.Bone : Color.FromArgb(194, 187, 143));
+        using var pageInk = new SolidBrush(active ? C.Oxide : C.Steel);
+        g.FillRectangle(pageShadow, x + 10, y + 2, 19, 25);
+        g.FillRectangle(page, x + 8, y, 19, 25);
+        g.FillRectangle(pageInk, x + 11, y + 6, 12, 2);
+        g.FillRectangle(pageInk, x + 11, y + 11, 9, 2);
+        g.FillRectangle(pageInk, x + 11, y + 16, 12, 2);
+
+        using var folderBack = new SolidBrush(Color.FromArgb(112, 94, 58));
+        using var folderFront = new SolidBrush(accent);
+        using var folderEdge = new Pen(active ? C.Bone : Color.FromArgb(79, 68, 45), 2)
+        {
+            LineJoin = System.Drawing.Drawing2D.LineJoin.Miter
+        };
+        var back = new PointF[]
+        {
+            new(x + 2, y + 12), new(x + 11, y + 12), new(x + 14, y + 8),
+            new(x + 23, y + 8), new(x + 26, y + 12), new(x + 31, y + 12),
+            new(x + 31, y + 31), new(x + 2, y + 31)
+        };
+        g.FillPolygon(folderBack, back);
+        var front = new PointF[]
+        {
+            new(x, y + 17), new(x + 13, y + 17), new(x + 16, y + 14),
+            new(x + 33, y + 14), new(x + 30, y + 32), new(x + 3, y + 32)
+        };
+        g.FillPolygon(folderFront, front);
+        g.DrawPolygon(folderEdge, front);
+
+        // A dark thumb notch is enough to read at native half-resolution.
+        using var notch = new SolidBrush(Color.FromArgb(155, C.Ink));
+        g.FillRectangle(notch, x + 13, y + 19, 8, 3);
+
+        if (!active) return;
+        using var focus = new SolidBrush(C.Signal);
+        g.FillRectangle(focus, button.X + 2, button.Y + 15, 3, 10);
+        g.FillRectangle(focus, button.Right - 5, button.Y + 23, 3, 10);
     }
 
     private void DrawMissionDossier(Graphics g)
@@ -511,7 +567,7 @@ internal sealed partial class GameForm
         g.FillRectangle(shadow, rect.X + 6, rect.Y + 7, rect.Width, rect.Height);
         g.FillPolygon(tab, CutPanelPoints(rect, 8));
         g.DrawPolygon(edge, CutPanelPoints(rect, 8));
-        LabFont.Draw(g, "Q / CLOSE", rect.X + rect.Width / 2, rect.Y + 13, 2,
+        LabFont.Draw(g, "CLOSE", rect.X + rect.Width / 2, rect.Y + 13, 2,
             hovered ? C.Ink : C.Bone, LabTextAlign.Center, 0);
     }
 }

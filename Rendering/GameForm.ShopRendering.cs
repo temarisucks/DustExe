@@ -608,8 +608,6 @@ internal sealed partial class GameForm
             DrawShopCommand(g, rect, commandNames[index], selected, hovered,
                 _shopPage != ShopPage.Commands && (int)_shopPage - 1 == index);
         }
-        LabFont.Draw(g, "ARROWS  NAVIGATE    ENTER / E  ACCEPT    ESC  BACK / LEAVE",
-            outer.X + 24, outer.Bottom - 25, 1, C.Steel);
         LabFont.Draw(g, $"REPAIR {_shopRepairReserve:00}    AEGIS {_shopProtectionCharges:00}    SALVAGE {SellInventory().Sum(x => x.Count):00}",
             outer.Right - 24, outer.Bottom - 25, 1, C.Sick, LabTextAlign.Right);
     }

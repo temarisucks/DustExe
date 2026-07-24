@@ -114,11 +114,6 @@ internal sealed partial class GameForm
         var exitLabel = _onlineMatchActive ? "LEAVE LOBBY" : "EJECT";
         DrawLatchButton(g, _againButton, primaryLabel, _hoverOverlay == 0);
         DrawAbortButton(g, _menuButton, exitLabel, _hoverOverlay == 1);
-        LabFont.Draw(g, _onlineMatchActive ? "ENTER  RETURN" : "ENTER  RESEED",
-            panel.X + 42, panel.Bottom + 18, 1, C.Signal);
-        LabFont.Draw(g, _onlineMatchActive ? "ESC  LEAVE LOBBY" : "ESC  EJECT TO ROUTING",
-            panel.Right - 42, panel.Bottom + 18,
-            1, C.Steel, LabTextAlign.Right);
     }
 
     private static void DrawFailureReadout(Graphics g, float x, float y, string label,

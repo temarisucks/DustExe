@@ -5,6 +5,7 @@ internal sealed partial class GameForm
     private int _menuMusicGeneration;
 
     private static bool IsMenuFamilyMode(ScreenMode mode) => mode is
+        ScreenMode.TutorialOffer or ScreenMode.Tutorial or
         ScreenMode.Title or ScreenMode.RunSettings or ScreenMode.Customize or
         ScreenMode.Settings or ScreenMode.Achievements or ScreenMode.OnlineAccount or
         ScreenMode.LobbyBrowser or ScreenMode.LobbyRoom;

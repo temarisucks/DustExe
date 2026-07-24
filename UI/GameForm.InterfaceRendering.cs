@@ -18,6 +18,12 @@ internal sealed partial class GameForm
             DrawFacilityShell(g);
             switch (_mode)
             {
+                case ScreenMode.TutorialOffer:
+                    DrawTutorialOffer(g);
+                    break;
+                case ScreenMode.Tutorial:
+                    DrawTutorialConsole(g);
+                    break;
                 case ScreenMode.Title:
                     DrawTitleMenu(g);
                     break;
@@ -135,10 +141,6 @@ internal sealed partial class GameForm
             g.FillRectangle(tick, rightX - (((int)y / 17) % 4 == 0 ? 11 : 5), y, ((int)y / 17) % 4 == 0 ? 11 : 5, 2);
         LabFont.Draw(g, "03", rightX - 1, _mazeRect.Y + 50, 1, C.Oxide, LabTextAlign.Right);
 
-        var controls = HasSpacePerk
-            ? "MOVE WASD/ARROWS   USE E   PERK SPACE   FILE Q"
-            : "MOVE WASD/ARROWS   USE E   FILE Q";
-        LabFont.Draw(g, controls, _mazeRect.X + 17, _mazeRect.Bottom - 23, 1, C.Sick);
         if (_shopProtectionCharges > 0 || _shopRepairReserve > 0)
         {
             var supplies = (_shopRepairReserve > 0 ? $"REPAIR {_shopRepairReserve:00}" : string.Empty) +
@@ -147,7 +149,6 @@ internal sealed partial class GameForm
             LabFont.Draw(g, supplies, _mazeRect.X + _mazeRect.Width / 2,
                 _mazeRect.Bottom - 23, 1, C.Signal, LabTextAlign.Center);
         }
-        LabFont.Draw(g, "RESET  R     ABORT  ESC", _mazeRect.Right - 17, _mazeRect.Bottom - 23, 1, C.Steel, LabTextAlign.Right);
         DrawMiniMap(g);
         if (!_missionDossierOpen) DrawMissionPrompt(g);
     }

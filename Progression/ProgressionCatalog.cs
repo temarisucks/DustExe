@@ -88,15 +88,15 @@ internal static class ProgressionCatalog
             AchievementId.Greedy, PerkActivation.Passive),
         new(PerkId.Hop, "Hop", "Move 2 spaces at a time, falling back to 1 space when the second is blocked.",
             AchievementId.CantBeThatBad, PerkActivation.Passive),
-        new(PerkId.Camouflage, "Camouflage", "Press Space to become invisible for a few seconds.",
+        new(PerkId.Camouflage, "Camouflage", "Become invisible to Hollow vision for a few seconds.",
             AchievementId.IWantToBeNinja, PerkActivation.Space),
         new(PerkId.MiniMap, "Mini Map", "Display a mini map in the bottom-right corner of the feed.",
             AchievementId.TheCartographer, PerkActivation.Passive),
-        new(PerkId.GhostForm, "Ghost Form", "Press Space to pass through walls for 3.5 seconds.",
+        new(PerkId.GhostForm, "Ghost Form", "Pass through walls for 3.5 seconds.",
             AchievementId.GhostLover, PerkActivation.Space),
         new(PerkId.Retracer, "Retracer", "Leave a visible trail behind the drone.",
             AchievementId.ImLost, PerkActivation.Passive),
-        new(PerkId.HollowKiller, "Hollow Killer", "Press Space to erase every enemy within a 4-tile radius. Recharges in 45 seconds.",
+        new(PerkId.HollowKiller, "Hollow Killer", "Erase every enemy within a 4-tile radius. Recharges in 45 seconds.",
             AchievementId.IDidItQuestion, PerkActivation.Space, AchievementId.IDidIt)
     ];
 

@@ -202,8 +202,6 @@ internal sealed partial class GameForm
             showState: false);
         if (_runSettingsSelection == 8) DrawKeyboardFocusMarker(g, _runStartButton);
         if (_runSettingsSelection == 9) DrawKeyboardFocusMarker(g, _backButton);
-        LabFont.Draw(g, "UP DOWN  SELECT", 338, 667, 1, C.Sick);
-        LabFont.Draw(g, "LEFT RIGHT  ADJUST", 338, 690, 1, C.Steel);
     }
 
     private void DrawRunScalarRow(Graphics g, RectangleF rect, int index, string label, string value)

@@ -123,9 +123,6 @@ internal sealed partial class GameForm
         _backButton = new RectangleF(72, 666, 188, 56);
         DrawAbortButton(g, _backButton, "BACK", _hoverBack || _customizeSection == 3);
         if (_customizeSection == 3) DrawKeyboardFocusMarker(g, _backButton);
-        LabFont.Draw(g, "UP DOWN  CHANGE BENCH", 292, 678, 1, C.Sick);
-        LabFont.Draw(g, "LEFT RIGHT  INDEX", 292, 702, 1, C.Steel);
-        LabFont.Draw(g, "ENTER  APPLY", 1188, 690, 1, C.Signal, LabTextAlign.Right);
     }
 
     private void DrawSettingsConsole(Graphics g)
@@ -204,8 +201,6 @@ internal sealed partial class GameForm
 
         _backButton = new RectangleF(72, 666, 188, 56);
         DrawAbortButton(g, _backButton, "BACK", _hoverBack);
-        LabFont.Draw(g, "UP DOWN  SELECT INSTRUMENT", 292, 678, 1, C.Sick);
-        LabFont.Draw(g, "LEFT RIGHT  ADJUST", 292, 702, 1, C.Steel);
         LabFont.Draw(g, "SETTINGS WRITE AUTOMATICALLY", 1188, 690, 1, C.Signal, LabTextAlign.Right);
     }
 
