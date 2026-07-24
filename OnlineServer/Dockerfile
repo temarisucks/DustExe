@@ -14,5 +14,5 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 COPY --from=build /output/ ./
 ENV OnlineServer__AccountFile=/data/accounts.json
-EXPOSE 5077
+dustexe-production.up.railway.appEXPOSE 5077
 ENTRYPOINT ["dotnet", "Dust.OnlineServer.dll"]

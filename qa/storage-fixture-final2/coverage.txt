@@ -1,0 +1,19 @@
+STORAGE FIXTURE QA PASSED
+Seeds: 128
+Rooms: 512
+Fixtures: 2722
+Freestanding directive fallbacks: 30
+Shapes: LShape, Rectangle, Square
+
+PROP/CargoStack: 295 placements / Up, Right, Down, Left
+PROP/PipeManifold: 271 placements / Up, Right, Down, Left
+PROP/SpecimenCabinet: 254 placements / Up, Right, Down, Left
+PROP/PressureTank: 281 placements / Up, Right, Down, Left
+PROP/CableReel: 287 placements / Up, Right, Down, Left
+PROP/WorkLight: 300 placements / Up, Right, Down, Left
+KIOSK: 128 placements / Up, Right, Down, Left
+SWITCH: 132 placements / Up, Right, Down, Left
+DIRECTIVE/ArchiveDecrypt: 96 placements / Up, Right, Down, Left
+DIRECTIVE/PressurePurge: 196 placements / Up, Right, Down, Left
+DIRECTIVE/SignalCalibrate: 306 placements / Up, Right, Down, Left
+DIRECTIVE/SpecimenSeal: 176 placements / Up, Right, Down, Left
