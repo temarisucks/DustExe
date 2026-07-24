@@ -12,7 +12,9 @@ internal sealed partial class GameForm
             if (IsPositionConcealed(renderCell)) continue;
             var center = CellCenter(renderCell);
             var radius = Math.Max(14, (int)(_cellSize * .29f) - 5);
-            var signal = hollow.State switch
+            var signal = hollow.Empowered
+                ? EnemyEmpowermentColor(hollow.AnimationPhase)
+                : hollow.State switch
             {
                 HollowState.Chase => C.Red,
                 HollowState.Search => C.Signal,
@@ -27,11 +29,42 @@ internal sealed partial class GameForm
                 case HollowType.Diamond:
                     DrawDiamondHollow(g, hollow, center, radius, signal);
                     break;
-                default:
+                case HollowType.Hex:
                     DrawHexHollow(g, hollow, center, radius, signal);
                     break;
+                case HollowType.Triangle:
+                    DrawTriangleHollow(g, hollow, center, radius, signal);
+                    break;
+                case HollowType.Camera:
+                    DrawCameraHollow(g, hollow, center, radius, signal,
+                        HollowRenderFacing(hollow));
+                    break;
+                case HollowType.Star:
+                    DrawStarHollow(g, hollow, center, radius, signal);
+                    break;
+            }
+
+            if (hollow.TeleportFlash > 0)
+            {
+                var progress = 1 - hollow.TeleportFlash / .42f;
+                using var jumpRing = new Pen(
+                    Color.FromArgb((int)(180 * (1 - progress)), signal), 4);
+                var jumpRadius = radius * (.7f + progress * 1.7f);
+                g.DrawEllipse(jumpRing, center.X - jumpRadius, center.Y - jumpRadius,
+                    jumpRadius * 2, jumpRadius * 2);
             }
         }
+    }
+
+    private Color EnemyEmpowermentColor(float phase)
+    {
+        var channel = ((int)MathF.Floor((_time + phase * .13f) * 7.5f) % 3 + 3) % 3;
+        return channel switch
+        {
+            0 => Color.FromArgb(235, 65, 62),
+            1 => Color.FromArgb(73, 224, 113),
+            _ => Color.FromArgb(73, 139, 244)
+        };
     }
 
     private void DrawSquareHollow(Graphics g, Hollow hollow, PointF center, float radius, Color signal)
@@ -100,6 +133,115 @@ internal sealed partial class GameForm
         }
     }
 
+    private void DrawTriangleHollow(
+        Graphics g,
+        Hollow hollow,
+        PointF center,
+        float radius,
+        Color signal)
+    {
+        if (!hollow.TriangleSplit)
+        {
+            var outerStep = MathF.Round(
+                (_time * 1.16f + hollow.AnimationPhase) / (MathF.PI / 18)) *
+                (MathF.PI / 18);
+            var innerStep = MathF.Round(
+                (-_time * 1.72f + hollow.AnimationPhase * .63f) / (MathF.PI / 18)) *
+                (MathF.PI / 18);
+            DrawHollowRing(g,
+                RegularPolygonPoints(center, 3, radius, -MathF.PI / 2 + outerStep),
+                signal, 10, 4);
+            DrawHollowRing(g,
+                RegularPolygonPoints(center, 3, radius * .55f,
+                    -MathF.PI / 2 + innerStep),
+                Color.FromArgb(205, signal), 8, 3);
+            return;
+        }
+
+        var orbitRadius = _cellSize * .30f;
+        var renderOrbit = hollow.TriangleOrbitAngle;
+        if (IsOnlineGameplayActive && !IsOnlineSimulationHost &&
+            hollow.PresentationReady)
+            renderOrbit = NormalizeAngle(
+                renderOrbit + hollow.PresentationSnapshotAge * 2.75f);
+        for (var index = 0; index < 3; index++)
+        {
+            var orbit = renderOrbit + index * MathF.PI * 2 / 3;
+            var member = new PointF(
+                center.X + MathF.Cos(orbit) * orbitRadius,
+                center.Y + MathF.Sin(orbit) * orbitRadius);
+            var rotation = -MathF.PI / 2 + _time * (2.1f + index * .16f) +
+                           hollow.AnimationPhase;
+            DrawHollowRing(g,
+                RegularPolygonPoints(member, 3, radius * .62f, rotation),
+                signal, 9, 3);
+        }
+    }
+
+    private void DrawCameraHollow(
+        Graphics g,
+        Hollow hollow,
+        PointF center,
+        float radius,
+        Color signal,
+        float renderFacing)
+    {
+        var state = g.Save();
+        g.TranslateTransform(center.X, center.Y);
+        g.RotateTransform(renderFacing * 180 / MathF.PI);
+        var body = new RectangleF(-radius * .65f, -radius * .48f,
+            radius * 1.08f, radius * .96f);
+        using var voidBrush = new SolidBrush(Color.FromArgb(225, 3, 7, 7));
+        using var shell = new Pen(signal, 4) { LineJoin = LineJoin.Miter };
+        using var mount = new Pen(Color.FromArgb(185, C.Steel), 7)
+        {
+            StartCap = LineCap.Square,
+            EndCap = LineCap.Square
+        };
+        g.DrawLine(mount, -radius * .98f, 0, -radius * .58f, 0);
+        g.FillRectangle(voidBrush, body);
+        g.DrawRectangle(shell, body.X, body.Y, body.Width, body.Height);
+        var lensCenter = new PointF(radius * .47f, 0);
+        g.FillEllipse(voidBrush, lensCenter.X - radius * .30f,
+            lensCenter.Y - radius * .30f, radius * .60f, radius * .60f);
+        g.DrawEllipse(shell, lensCenter.X - radius * .30f,
+            lensCenter.Y - radius * .30f, radius * .60f, radius * .60f);
+        using var lens = new SolidBrush(Color.FromArgb(210, signal));
+        g.FillEllipse(lens, lensCenter.X - radius * .11f,
+            lensCenter.Y - radius * .11f, radius * .22f, radius * .22f);
+        g.Restore(state);
+    }
+
+    private void DrawStarHollow(
+        Graphics g,
+        Hollow hollow,
+        PointF center,
+        float radius,
+        Color signal)
+    {
+        var auraPulse = .5f + .5f * MathF.Sin(_time * 2.6f + hollow.AnimationPhase);
+        using (var aura = new Pen(
+                   Color.FromArgb((int)(42 + auraPulse * 38), signal), 3))
+        {
+            var auraRadius = radius * (1.35f + auraPulse * .12f);
+            g.DrawEllipse(aura, center.X - auraRadius, center.Y - auraRadius,
+                auraRadius * 2, auraRadius * 2);
+        }
+        var rotation = -MathF.PI / 2 + _time * .78f + hollow.AnimationPhase;
+        var points = new PointF[10];
+        for (var index = 0; index < points.Length; index++)
+        {
+            var pointRadius = index % 2 == 0 ? radius : radius * .43f;
+            var angle = rotation + index * MathF.PI / 5;
+            points[index] = new PointF(
+                center.X + MathF.Cos(angle) * pointRadius,
+                center.Y + MathF.Sin(angle) * pointRadius);
+        }
+        DrawHollowRing(g, points, signal, 10, 4);
+        var core = RegularPolygonPoints(center, 5, radius * .28f, -rotation);
+        DrawHollowRing(g, core, Color.FromArgb(190, signal), 7, 3);
+    }
+
     private static void DrawHollowRing(Graphics g, PointF[] points, Color signal, float keylineWidth, float signalWidth)
     {
         using var voidKeyline = new Pen(Color.FromArgb(Math.Min(235, (int)signal.A), 3, 7, 7), keylineWidth)
@@ -158,7 +300,7 @@ internal sealed partial class GameForm
             {
                 var angle = renderFacing + offset;
                 var distance = RaycastVisionDistance(
-                    renderCell, angle, viewDistance, hollow.Type == HollowType.Hex);
+                    renderCell, angle, viewDistance, HollowIgnoresVisionWalls(hollow));
                 distance = Math.Max(innerRadius, distance);
                 outer.Add(SnapToFeed(CellCenter(new PointF(
                     renderCell.X + MathF.Cos(angle) * distance,
@@ -197,6 +339,9 @@ internal sealed partial class GameForm
         {
             HollowType.Square => 24,
             HollowType.Diamond => 40,
+            HollowType.Camera => 36,
+            HollowType.Triangle => 32,
+            HollowType.Star => 34,
             _ => 18
         };
         var halfField = fieldOfView / 2;
@@ -204,7 +349,7 @@ internal sealed partial class GameForm
         for (var i = 0; i <= rayCount; i++)
             offsets.Add(-halfField + fieldOfView * i / rayCount);
 
-        if (_maze is not null && hollow.Type != HollowType.Hex)
+        if (_maze is not null && !HollowIgnoresVisionWalls(hollow))
         {
             const float edgeEpsilon = .0015f;
             var minGridX = Math.Max(0, (int)MathF.Floor(renderCell.X - viewDistance + .5f));

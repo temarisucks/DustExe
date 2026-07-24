@@ -20,6 +20,7 @@ internal sealed partial class GameForm
         var separationY = hollow.PresentationCell.Y - hollow.VisualCell.Y;
         var needsHardCorrection =
             !hollow.PresentationReady ||
+            hollow.TeleportFlash > 0 ||
             separationX * separationX + separationY * separationY > 2.25f;
         if (needsHardCorrection)
         {

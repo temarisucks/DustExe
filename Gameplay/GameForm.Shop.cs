@@ -5,6 +5,7 @@ internal sealed partial class GameForm
     private readonly List<RoomProp> _roomProps = [];
     private readonly List<RoomSalvage> _roomSalvage = [];
     private readonly List<ShopStockItem> _shopStock = [];
+    private readonly HashSet<Point> _blockedRoomFixtureCells = [];
     private readonly RectangleF[] _shopCommandButtons = new RectangleF[4];
     private readonly RectangleF[] _shopListRows = new RectangleF[6];
     private ShopKiosk? _shopKiosk;
@@ -30,6 +31,7 @@ internal sealed partial class GameForm
         _roomProps.Clear();
         _roomSalvage.Clear();
         _shopStock.Clear();
+        _blockedRoomFixtureCells.Clear();
         _shopKiosk = null;
         _shopPage = ShopPage.Commands;
         _shopCommandSelection = 0;
@@ -52,9 +54,15 @@ internal sealed partial class GameForm
             .ToList();
         var kioskCell = kioskCandidates
             .Where(cell => occupied.All(other => Manhattan(cell, other) > 1))
+            .Where(cell => PreservesRoomWalkability(
+                shopRoom, _blockedRoomFixtureCells, cell))
             .Cast<Point?>()
             .FirstOrDefault() ??
-            kioskCandidates.Cast<Point?>().FirstOrDefault();
+            kioskCandidates
+                .Where(cell => PreservesRoomWalkability(
+                    shopRoom, _blockedRoomFixtureCells, cell))
+                .Cast<Point?>()
+                .FirstOrDefault();
         if (kioskCell is { } selectedKioskCell)
         {
             _shopKiosk = new ShopKiosk
@@ -65,6 +73,7 @@ internal sealed partial class GameForm
                     shopRoom, selectedKioskCell, shopRoom.Id * 47 + _level)
             };
             occupied.Add(selectedKioskCell);
+            _blockedRoomFixtureCells.Add(selectedKioskCell);
             foreach (var apronCell in shopRoom.Cells.Where(
                          cell => Manhattan(cell, selectedKioskCell) == 1))
                 occupied.Add(apronCell);
@@ -81,9 +90,13 @@ internal sealed partial class GameForm
                 .ThenBy(cell => PositiveHash(cell.X * 92821 ^ cell.Y * 68917 ^ room.Id * 1327 ^ _level * 31))
                 .ToList();
             var propCount = Math.Clamp(room.Cells.Count / 7, 3, 6);
-            for (var index = 0; index < Math.Min(propCount, candidates.Count); index++)
+            var placedProps = 0;
+            foreach (var cell in candidates)
             {
-                var cell = candidates[index];
+                if (placedProps >= propCount) break;
+                if (!PreservesRoomWalkability(
+                        room, _blockedRoomFixtureCells, cell))
+                    continue;
                 var hash = PositiveHash(cell.X * 31337 ^ cell.Y * 7919 ^ room.Id * 101);
                 _roomProps.Add(new RoomProp
                 {
@@ -94,6 +107,8 @@ internal sealed partial class GameForm
                     Variant = (hash / 17) % 4
                 });
                 occupied.Add(cell);
+                _blockedRoomFixtureCells.Add(cell);
+                placedProps++;
             }
 
             // Salvage is small, non-blocking, and collected by crossing its tile.
@@ -146,6 +161,53 @@ internal sealed partial class GameForm
             StartingStock = 2,
             Stock = 2
         });
+    }
+
+    /// <summary>
+    /// Physical storage dressing occupies its tile. Mission cargo, salvage, and
+    /// wall controls deliberately do not use this set: their existing interaction
+    /// rules require the drone to stand on or beside them.
+    /// </summary>
+    private bool IsRoomDecorationBlockingCell(Point cell) =>
+        _blockedRoomFixtureCells.Contains(cell);
+
+    private static bool PreservesRoomWalkability(
+        CargoRoom room,
+        IReadOnlySet<Point> existingBlocked,
+        Point candidate)
+    {
+        if (candidate == room.DoorCell || existingBlocked.Contains(candidate) ||
+            !room.Contains(candidate))
+            return false;
+
+        var remaining = room.Cells.Count(cell =>
+            cell != candidate && !existingBlocked.Contains(cell));
+        if (remaining <= 0 || existingBlocked.Contains(room.DoorCell))
+            return false;
+
+        var reached = new HashSet<Point> { room.DoorCell };
+        var queue = new Queue<Point>();
+        queue.Enqueue(room.DoorCell);
+        while (queue.Count > 0)
+        {
+            var cell = queue.Dequeue();
+            foreach (var direction in Enum.GetValues<Direction>())
+            {
+                var next = direction switch
+                {
+                    Direction.Up => new Point(cell.X, cell.Y - 1),
+                    Direction.Right => new Point(cell.X + 1, cell.Y),
+                    Direction.Down => new Point(cell.X, cell.Y + 1),
+                    _ => new Point(cell.X - 1, cell.Y)
+                };
+                if (next == candidate || existingBlocked.Contains(next) ||
+                    !room.Contains(next) || !reached.Add(next))
+                    continue;
+                queue.Enqueue(next);
+            }
+        }
+
+        return reached.Count == remaining;
     }
 
     private static int PositiveHash(int value) => value == int.MinValue ? int.MaxValue : Math.Abs(value);
@@ -211,6 +273,7 @@ internal sealed partial class GameForm
         _shopPage = ShopPage.Commands;
         _shopCommandSelection = 0;
         _shopListSelection = 0;
+        ResetPauseMenuState();
         _mode = ScreenMode.Shop;
         StartShopDialogue("There you are, little drone.\nSet your cargo down. Nothing hunts inside my counter-light.");
         _audio.Play(AudioCue.Confirm);

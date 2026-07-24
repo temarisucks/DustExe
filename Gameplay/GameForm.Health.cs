@@ -10,6 +10,8 @@ internal sealed partial class GameForm
     private void EnterFailure()
     {
         if (_mode != ScreenMode.Playing) return;
+        if (_pauseMenuOpen) SettleOfflinePauseClock();
+        ResetPauseMenuState();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _failedTime = DateTime.Now - _startedAt;

@@ -52,7 +52,7 @@ internal sealed partial class GameForm
     {
         if (_activeRunSettings.HollowAmount == RunHollowAmount.None ||
             _activeRunSettings.HollowTypes == RunHollowTypes.None)
-            return new EnemyRoster(0, 0, 0, 0);
+            return new EnemyRoster(0, 0, 0, 0, 0, 0, 0);
 
         var total = _activeRunSettings.HollowAmount switch
         {
@@ -68,28 +68,38 @@ internal sealed partial class GameForm
             (Flag: RunHollowTypes.Square, Weight: 3),
             (Flag: RunHollowTypes.Diamond, Weight: 2),
             (Flag: RunHollowTypes.Hex, Weight: 1),
-            (Flag: RunHollowTypes.Sentry, Weight: 1)
+            (Flag: RunHollowTypes.Sentry, Weight: 1),
+            (Flag: RunHollowTypes.Triangle, Weight: 2),
+            (Flag: RunHollowTypes.Camera, Weight: 1),
+            (Flag: RunHollowTypes.Star, Weight: 1)
         };
         var enabled = types.Where(type => _activeRunSettings.Allows(type.Flag)).ToArray();
-        if (enabled.Length == 0) return new EnemyRoster(0, 0, 0, 0);
+        if (enabled.Length == 0) return new EnemyRoster(0, 0, 0, 0, 0, 0, 0);
 
+        // If density can support the whole selected roster, every socket gets
+        // one representative before weights distribute the surplus. This keeps
+        // specialist types such as Stars and Cameras present in a default All
+        // run instead of losing them to fractional rounding.
+        var guaranteedPerType = total >= enabled.Length ? 1 : 0;
+        var remaining = total - guaranteedPerType * enabled.Length;
         var weightTotal = enabled.Sum(type => type.Weight);
         var allocations = new Dictionary<RunHollowTypes, int>();
         var fractions = new List<(RunHollowTypes Type, float Fraction, int Order)>();
-        var assigned = 0;
+        var assignedSurplus = 0;
         for (var index = 0; index < enabled.Length; index++)
         {
-            var exact = total * enabled[index].Weight / (float)weightTotal;
-            var count = (int)MathF.Floor(exact);
+            var exact = remaining * enabled[index].Weight / (float)weightTotal;
+            var surplus = (int)MathF.Floor(exact);
+            var count = guaranteedPerType + surplus;
             allocations[enabled[index].Flag] = count;
-            fractions.Add((enabled[index].Flag, exact - count, index));
-            assigned += count;
+            fractions.Add((enabled[index].Flag, exact - surplus, index));
+            assignedSurplus += surplus;
         }
 
         foreach (var entry in fractions
                      .OrderByDescending(entry => entry.Fraction)
                      .ThenBy(entry => entry.Order)
-                     .Take(total - assigned))
+                     .Take(remaining - assignedSurplus))
             allocations[entry.Type]++;
 
         int Count(RunHollowTypes type) => allocations.GetValueOrDefault(type);
@@ -97,6 +107,9 @@ internal sealed partial class GameForm
             Count(RunHollowTypes.Square),
             Count(RunHollowTypes.Diamond),
             Count(RunHollowTypes.Hex),
-            Count(RunHollowTypes.Sentry));
+            Count(RunHollowTypes.Sentry),
+            Count(RunHollowTypes.Triangle),
+            Count(RunHollowTypes.Camera),
+            Count(RunHollowTypes.Star));
     }
 }

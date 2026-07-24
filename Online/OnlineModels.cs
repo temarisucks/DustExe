@@ -24,7 +24,8 @@ internal sealed record OnlineLobbySettings(
         hollowAmount = HollowAmount.ToString().ToLowerInvariant(),
         hollowTypes = Enum.GetValues<RunHollowTypes>()
             .Where(type => type is RunHollowTypes.Square or RunHollowTypes.Diamond or
-                RunHollowTypes.Hex or RunHollowTypes.Sentry)
+                RunHollowTypes.Hex or RunHollowTypes.Sentry or RunHollowTypes.Triangle or
+                RunHollowTypes.Camera or RunHollowTypes.Star)
             .Where(type => HollowTypes.HasFlag(type))
             .Select(type => type.ToString().ToLowerInvariant())
             .ToArray(),
@@ -120,7 +121,7 @@ internal readonly record struct OnlineMoveIntent(long Sequence, Direction Direct
 
 internal sealed class OnlineWorldSnapshot
 {
-    public int ProtocolVersion { get; set; } = 2;
+    public int ProtocolVersion { get; set; } = 3;
     public long Tick { get; set; }
     public long WorldRevision { get; set; }
     public long AuthorityRevision { get; set; }
@@ -136,6 +137,7 @@ internal sealed class OnlineWorldSnapshot
     public OnlineHollowSnapshot[] Hollows { get; set; } = [];
     public OnlineSentrySnapshot[] Sentries { get; set; } = [];
     public OnlineProjectileSnapshot[] Projectiles { get; set; } = [];
+    public string DestroyedWallBits { get; set; } = string.Empty;
     public OnlineCargoSnapshot[] Cargo { get; set; } = [];
     public OnlineCreditSnapshot[] Credits { get; set; } = [];
     public OnlineSalvageSnapshot[] Salvage { get; set; } = [];
@@ -225,6 +227,14 @@ internal sealed class OnlineHollowSnapshot
     public float AggressionScale { get; set; }
     public bool HasSight { get; set; }
     public string? TargetPlayerId { get; set; }
+    public bool Empowered { get; set; }
+    public bool TriangleSplit { get; set; }
+    public float TriangleSplitTimer { get; set; }
+    public float TriangleOrbitAngle { get; set; }
+    public float PreviousTriangleOrbitAngle { get; set; }
+    public float AbilityCooldown { get; set; }
+    public float ProjectileCooldown { get; set; }
+    public float TeleportFlash { get; set; }
 }
 
 internal sealed class OnlineSentrySnapshot
@@ -244,6 +254,7 @@ internal sealed class OnlineSentrySnapshot
     public int Phase { get; set; }
     public float PhaseTimer { get; set; }
     public string? TargetPlayerId { get; set; }
+    public bool Empowered { get; set; }
 }
 
 internal sealed class OnlineProjectileSnapshot
@@ -256,6 +267,10 @@ internal sealed class OnlineProjectileSnapshot
     public float VelocityX { get; set; }
     public float VelocityY { get; set; }
     public float Lifetime { get; set; }
+    public int Kind { get; set; }
+    public int Damage { get; set; } = 1;
+    public bool IgnoreWalls { get; set; }
+    public bool DestroyWalls { get; set; }
 }
 
 internal sealed class OnlineCargoSnapshot

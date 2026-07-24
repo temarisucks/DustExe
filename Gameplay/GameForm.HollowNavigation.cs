@@ -13,6 +13,7 @@ internal sealed partial class GameForm
             if (!_maze.CanMove(hollow.Cell, direction)) continue;
             var next = _maze.Move(hollow.Cell, direction);
             if (IsCellConcealed(next)) continue;
+            if (IsRoomDecorationBlockingCell(next)) continue;
             if (IsOccupiedByOtherHollow(hollow, next)) continue;
             if (center.HasValue && GraphDistance(next, center.Value, radius) < 0) continue;
             choices.Add(next);
@@ -48,6 +49,7 @@ internal sealed partial class GameForm
                 if (!_maze.CanMove(cell, direction)) continue;
                 var next = _maze.Move(cell, direction);
                 if (IsCellConcealed(next)) continue;
+                if (IsRoomDecorationBlockingCell(next)) continue;
                 if (distance[next.X, next.Y] >= 0) continue;
                 if (next == target) return nextDistance;
                 distance[next.X, next.Y] = nextDistance;
@@ -74,6 +76,7 @@ internal sealed partial class GameForm
                 if (!_maze.CanMove(cell, direction)) continue;
                 var next = _maze.Move(cell, direction);
                 if (IsCellConcealed(next)) continue;
+                if (IsRoomDecorationBlockingCell(next)) continue;
                 if (visited[next.X, next.Y]) continue;
                 if (IsOccupiedByOtherHollow(hollow, next)) continue;
                 visited[next.X, next.Y] = true;
@@ -104,7 +107,7 @@ internal sealed partial class GameForm
         var targetAngle = MathF.Atan2(dy, dx);
         var retainedField = HollowFieldOfView(hollow, retainSight);
         if (Math.Abs(NormalizeAngle(targetAngle - hollow.FacingAngle)) > retainedField / 2) return false;
-        if (hollow.Type == HollowType.Hex) return true;
+        if (HollowIgnoresVisionWalls(hollow)) return true;
 
         var distance = MathF.Sqrt(distanceSquared);
         var clearDistance = RaycastVisionDistance(from, targetAngle, distance, false);
@@ -116,6 +119,10 @@ internal sealed partial class GameForm
 
     private static float HollowFieldOfView(Hollow hollow, bool retainSight) =>
         hollow.FieldOfView + (retainSight ? 6 * MathF.PI / 180 : 0);
+
+    private static bool HollowIgnoresVisionWalls(Hollow hollow) =>
+        hollow.Type == HollowType.Hex ||
+        hollow.Empowered && hollow.Type is HollowType.Triangle or HollowType.Star;
 
     private float RaycastVisionDistance(PointF origin, float angle, float maximum, bool ignoreWalls)
     {

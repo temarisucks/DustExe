@@ -6,6 +6,9 @@ namespace Dust;
 internal sealed partial class GameForm
 {
     private const int VisibleLobbyRows = 6;
+    private const int OnlineLobbySettingCount = 11;
+    private const int OnlineLobbyStartSelection = 11;
+    private const int OnlineLobbyLeaveSelection = 12;
     private static readonly TimeSpan OnlineResponseTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan OnlineReconnectWindow = TimeSpan.FromSeconds(13);
     private static readonly TimeSpan OnlineReconnectAttemptTimeout = TimeSpan.FromSeconds(3);
@@ -18,6 +21,9 @@ internal sealed partial class GameForm
         "DIAMOND",
         "HEX",
         "SENTRY",
+        "TRIANGLE",
+        "CAMERA",
+        "STAR",
         "DIFFICULTY SCALING"
     ];
 
@@ -29,7 +35,8 @@ internal sealed partial class GameForm
     private readonly RectangleF[] _onlineAccountButtons = new RectangleF[3];
     private readonly RectangleF[] _onlineLobbyRows = new RectangleF[VisibleLobbyRows];
     private readonly RectangleF[] _onlineBrowserButtons = new RectangleF[4];
-    private readonly RectangleF[] _onlineLobbySettingRows = new RectangleF[8];
+    private readonly RectangleF[] _onlineLobbySettingRows =
+        new RectangleF[OnlineLobbySettingCount];
     private readonly RectangleF[] _onlineLobbyButtons = new RectangleF[2];
 
     private CancellationTokenSource? _onlineOperationCancellation;
@@ -132,7 +139,7 @@ internal sealed partial class GameForm
             if (_onlineLobby is not null)
             {
                 _mode = ScreenMode.LobbyRoom;
-                _onlineLobbySelection = IsOnlineLobbyHost ? 0 : 9;
+                _onlineLobbySelection = IsOnlineLobbyHost ? 0 : OnlineLobbyLeaveSelection;
             }
             else
             {
@@ -290,12 +297,12 @@ internal sealed partial class GameForm
         }
         else if (e.KeyCode is Keys.W or Keys.Up || e.Shift && e.KeyCode == Keys.Tab)
         {
-            _onlineLobbySelection = Wrap(_onlineLobbySelection - 1, 10);
+            _onlineLobbySelection = Wrap(_onlineLobbySelection - 1, 13);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode is Keys.S or Keys.Down or Keys.Tab)
         {
-            _onlineLobbySelection = Wrap(_onlineLobbySelection + 1, 10);
+            _onlineLobbySelection = Wrap(_onlineLobbySelection + 1, 13);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode is Keys.A or Keys.Left)
@@ -313,7 +320,7 @@ internal sealed partial class GameForm
         else return;
 
         if (!IsOnlineLobbyHost)
-            _onlineLobbySelection = 9;
+            _onlineLobbySelection = OnlineLobbyLeaveSelection;
         ConsumeKey(e);
     }
 
@@ -410,14 +417,14 @@ internal sealed partial class GameForm
             }
             if (_onlineLobbyButtons[0].Contains(hit))
             {
-                _onlineLobbySelection = 8;
+                _onlineLobbySelection = OnlineLobbyStartSelection;
                 ActivateOnlineLobbySelection();
                 return true;
             }
         }
         if (_onlineLobbyButtons[1].Contains(hit))
         {
-            _onlineLobbySelection = 9;
+            _onlineLobbySelection = OnlineLobbyLeaveSelection;
             ActivateOnlineLobbySelection();
             return true;
         }
@@ -479,12 +486,12 @@ internal sealed partial class GameForm
     private void ActivateOnlineLobbySelection()
     {
         if (_onlineBusy) return;
-        if (_onlineLobbySelection < 8)
+        if (_onlineLobbySelection < OnlineLobbySettingCount)
         {
             AdjustOnlineLobbySelection(1, toggle: true);
             return;
         }
-        if (_onlineLobbySelection == 8 && CanEditOnlineLobby)
+        if (_onlineLobbySelection == OnlineLobbyStartSelection && CanEditOnlineLobby)
         {
             _audio.Play(AudioCue.Confirm);
             _onlineBusy = true;
@@ -492,14 +499,14 @@ internal sealed partial class GameForm
             _ = SendOnlineQuietlyAsync("lobby.start", new { }, NextOnlineRequest("start"));
             return;
         }
-        if (_onlineLobbySelection == 9)
+        if (_onlineLobbySelection == OnlineLobbyLeaveSelection)
             LeaveOnlineLobby();
     }
 
     private void AdjustOnlineLobbySelection(int direction, bool toggle = false)
     {
         if (!CanEditOnlineLobby || _onlineLobby is null || _onlineBusy ||
-            _onlineLobbySelection is < 0 or > 7)
+            _onlineLobbySelection is < 0 or >= OnlineLobbySettingCount)
             return;
 
         var settings = _onlineLobby.Settings;
@@ -531,7 +538,7 @@ internal sealed partial class GameForm
                 };
                 break;
             }
-            case >= 3 and <= 6:
+            case >= 3 and <= 9:
             {
                 var flag = (RunHollowTypes)(1 << (_onlineLobbySelection - 3));
                 var enabled = toggle ? !settings.HollowTypes.HasFlag(flag) : direction > 0;
@@ -545,7 +552,7 @@ internal sealed partial class GameForm
                 updated = settings with { HollowTypes = flags };
                 break;
             }
-            case 7:
+            case 10:
                 updated = settings with
                 {
                     DifficultyScaling = toggle
@@ -781,6 +788,7 @@ internal sealed partial class GameForm
 
     private void DisconnectOnlineSessionForTitle()
     {
+        ResetPauseMenuState();
         if (_onlineExpectedDisconnect && _onlineLobby is null &&
             string.IsNullOrWhiteSpace(_onlinePlayerId))
             return;
@@ -937,6 +945,7 @@ internal sealed partial class GameForm
                 HandleLobbyState(ParseLobbyState(message.Data, _onlineLobby));
                 break;
             case "lobby.left":
+                ResetPauseMenuState();
                 _onlineLobby = null;
                 _onlineMatchActive = false;
                 _onlineBusy = false;
@@ -1026,6 +1035,7 @@ internal sealed partial class GameForm
             52);
         if (isResume)
         {
+            ResetPauseMenuState();
             _onlineReconnecting = false;
             _onlinePlayerId = null;
             _onlineUsername = null;
@@ -1110,9 +1120,10 @@ internal sealed partial class GameForm
         if (state.Status.Equals("waiting", StringComparison.OrdinalIgnoreCase))
         {
             var returnedFromRun = _onlineMatchActive;
+            ResetPauseMenuState();
             _onlineMatchActive = false;
             _mode = ScreenMode.LobbyRoom;
-            _onlineLobbySelection = IsOnlineLobbyHost ? 0 : 9;
+            _onlineLobbySelection = IsOnlineLobbyHost ? 0 : OnlineLobbyLeaveSelection;
             ResetHover();
             if (returnedFromRun)
             {
@@ -1132,6 +1143,7 @@ internal sealed partial class GameForm
         if (string.IsNullOrWhiteSpace(_onlineResumeToken) ||
             string.IsNullOrWhiteSpace(_onlineServerAddress))
         {
+            ResetPauseMenuState();
             _onlinePlayerId = null;
             _onlineUsername = null;
             _mode = ScreenMode.OnlineAccount;
@@ -1236,6 +1248,7 @@ internal sealed partial class GameForm
             _onlineResumeToken = null;
             _onlineLobby = null;
             _onlineMatchActive = false;
+            ResetPauseMenuState();
             _mode = ScreenMode.OnlineAccount;
         });
     }
@@ -1512,17 +1525,17 @@ internal sealed partial class GameForm
         var settings = _onlineLobby?.Settings ?? OnlineLobbySettings.Default;
         for (var index = 0; index < _onlineLobbySettingRows.Length; index++)
         {
-            var rect = new RectangleF(settingsBay.X + 22, settingsBay.Y + 68 + index * 49,
-                settingsBay.Width - 44, 42);
+            var rect = new RectangleF(settingsBay.X + 22, settingsBay.Y + 62 + index * 36,
+                settingsBay.Width - 44, 31);
             _onlineLobbySettingRows[index] = rect;
             var focused = CanEditOnlineLobby && _onlineLobbySelection == index;
             var hovered = CanEditOnlineLobby && _onlineHover == 60 + index;
             DrawCutPanel(g, rect,
                 focused ? Color.FromArgb(44, 52, 43) : Color.FromArgb(18, 27, 25),
                 focused || hovered ? C.Signal : C.Steel, 7, focused ? 3 : 2);
-            LabFont.Draw(g, OnlineSettingLabels[index], rect.X + 14, rect.Y + 13, 1,
+            LabFont.Draw(g, OnlineSettingLabels[index], rect.X + 14, rect.Y + 9, 1,
                 focused || hovered ? C.Bone : C.Sick);
-            LabFont.Draw(g, OnlineSettingValue(settings, index), rect.Right - 14, rect.Y + 13, 1,
+            LabFont.Draw(g, OnlineSettingValue(settings, index), rect.Right - 14, rect.Y + 9, 1,
                 focused || hovered ? C.Signal : C.Steel, LabTextAlign.Right);
             if (focused) DrawKeyboardFocusMarker(g, rect);
         }
@@ -1531,7 +1544,7 @@ internal sealed partial class GameForm
         _onlineLobbyButtons[1] = new RectangleF(988, 650, 200, 62);
         if (CanEditOnlineLobby)
             DrawOnlineButton(g, _onlineLobbyButtons[0], "START RUN",
-                _onlineLobbySelection == 8, _onlineHover == 80);
+                _onlineLobbySelection == OnlineLobbyStartSelection, _onlineHover == 80);
         else if (IsOnlineLobbyHost)
             DrawOnlineButton(g, _onlineLobbyButtons[0], "RECONNECTING",
                 false, false, enabled: false);
@@ -1539,8 +1552,9 @@ internal sealed partial class GameForm
             DrawOnlineButton(g, _onlineLobbyButtons[0], "WAITING FOR HOST",
                 false, false, enabled: false);
         DrawAbortButton(g, _onlineLobbyButtons[1], "LEAVE",
-            _onlineLobbySelection == 9 || _onlineHover == 81);
-        if (_onlineLobbySelection == 9) DrawKeyboardFocusMarker(g, _onlineLobbyButtons[1]);
+            _onlineLobbySelection == OnlineLobbyLeaveSelection || _onlineHover == 81);
+        if (_onlineLobbySelection == OnlineLobbyLeaveSelection)
+            DrawKeyboardFocusMarker(g, _onlineLobbyButtons[1]);
         LabFont.Draw(g, OnlineDisplay(_onlineStatus, 44), 72, 671, 1,
             _onlineBusy || _onlineReconnecting ? C.Signal : C.Sick);
     }
@@ -1675,7 +1689,10 @@ internal sealed partial class GameForm
         4 => settings.HollowTypes.HasFlag(RunHollowTypes.Diamond) ? "ON" : "OFF",
         5 => settings.HollowTypes.HasFlag(RunHollowTypes.Hex) ? "ON" : "OFF",
         6 => settings.HollowTypes.HasFlag(RunHollowTypes.Sentry) ? "ON" : "OFF",
-        7 => settings.DifficultyScaling ? "ON" : "OFF",
+        7 => settings.HollowTypes.HasFlag(RunHollowTypes.Triangle) ? "ON" : "OFF",
+        8 => settings.HollowTypes.HasFlag(RunHollowTypes.Camera) ? "ON" : "OFF",
+        9 => settings.HollowTypes.HasFlag(RunHollowTypes.Star) ? "ON" : "OFF",
+        10 => settings.DifficultyScaling ? "ON" : "OFF",
         _ => string.Empty
     };
 

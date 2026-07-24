@@ -7,7 +7,7 @@ namespace Dust;
 
 internal sealed partial class GameForm
 {
-    private const int OnlineGameplayProtocolVersion = 2;
+    private const int OnlineGameplayProtocolVersion = 3;
     private const float OnlineSnapshotInterval = .09f;
     private static readonly TimeSpan OnlineSnapshotSendTimeout =
         TimeSpan.FromSeconds(1.5);
@@ -244,6 +244,7 @@ internal sealed partial class GameForm
             ApplyOnlineSnapshot(pending);
         }
         UpdateOnlineHollowPresentation(wallDeltaTime);
+        UpdateOnlineEnemyProjectilePresentation(wallDeltaTime);
 
         if (!IsOnlineSimulationHost) return;
         _onlineSnapshotTimer += wallDeltaTime;
@@ -881,6 +882,9 @@ internal sealed partial class GameForm
                            destination.Y >= 0 && destination.Y < _maze.Height;
             var canPhase = player.GhostFormTimer > 0 && inBounds;
             if (!normallyOpen && !canPhase) break;
+            // Host-authoritative movement uses the same solid fixture occupancy
+            // as local prediction, including while Ghost Form is active.
+            if (IsRoomDecorationBlockingCell(destination)) break;
             if (IsSurvivorBlockingCell(destination)) break;
             player.TraversalUsedGhostForm |= !normallyOpen && canPhase;
             traversal.Add(destination);
@@ -1110,7 +1114,10 @@ internal sealed partial class GameForm
         }
     }
 
-    private void DamageOnlinePlayer(OnlineRemotePlayer player, bool causedByHollow = true)
+    private void DamageOnlinePlayer(
+        OnlineRemotePlayer player,
+        int damage = 1,
+        bool causedByHollow = true)
     {
         if (player.Invulnerability > 0 || player.Defeated || player.InShop ||
             !player.Connected) return;
@@ -1124,8 +1131,9 @@ internal sealed partial class GameForm
             return;
         }
         DropOnlineCargo(player);
-        player.Damage++;
-        player.TotalDamageSustained++;
+        damage = Math.Max(1, damage);
+        player.Damage += damage;
+        player.TotalDamageSustained += damage;
         player.LastDamageWasHollow = causedByHollow;
         if (player.ShopRepairReserve > 0 && player.Damage > 0)
         {
@@ -1135,6 +1143,7 @@ internal sealed partial class GameForm
             player.ShopMessage = "BANKED REPAIR DEPLOYED / FRAME RESTORED";
             player.ShopCue = (int)AudioCue.Confirm;
         }
+        player.Damage = Math.Min(player.Damage, player.MaximumHealth);
         player.Invulnerability = 2.4f;
         if (player.Damage >= player.MaximumHealth)
         {
@@ -1157,7 +1166,8 @@ internal sealed partial class GameForm
             var cell = new Point(x, y);
             if (cell == _exitCell || cell == player.Cell || _maze.GetRoomAt(cell) is not null)
                 continue;
-            if (IsSurvivorBlockingCell(cell) ||
+            if (IsRoomDecorationBlockingCell(cell) ||
+                IsSurvivorBlockingCell(cell) ||
                 _hollows.Any(hollow => Manhattan(hollow.Cell, cell) < 7) ||
                 _sentries.Any(sentry => Manhattan(sentry.Cell, cell) < 7))
                 continue;
@@ -1199,11 +1209,11 @@ internal sealed partial class GameForm
             if (!OnlinePlayerCanBeTargeted(player) || player.Invulnerability > 0) continue;
             foreach (var hollow in _hollows)
             {
-                var separation = SweptSeparationSquared(
-                    player.PreviousVisualCell, player.VisualCell,
-                    hollow.PreviousVisualCell, hollow.VisualCell);
-                if (separation > .27f) continue;
-                DamageOnlinePlayer(player);
+                if (hollow.Type == HollowType.Camera) continue;
+                var contact = HollowMakesContact(
+                    hollow, player.PreviousVisualCell, player.VisualCell);
+                if (!contact) continue;
+                DamageOnlinePlayer(player, HollowContactDamage(hollow));
                 break;
             }
         }
@@ -1234,7 +1244,8 @@ internal sealed partial class GameForm
                 player.PreviousVisualCell, player.VisualCell,
                 projectile.PreviousPosition, projectile.Position);
             if (separation > .075f) continue;
-            DamageOnlinePlayer(player, causedByHollow: false);
+            DamageOnlinePlayer(player, projectile.Damage,
+                causedByHollow: projectile.Kind != EnemyProjectileKind.Sentry);
             return true;
         }
         return false;
@@ -1397,7 +1408,15 @@ internal sealed partial class GameForm
                 AnimationPhase = hollow.AnimationPhase,
                 AggressionScale = hollow.AggressionScale,
                 HasSight = hollow.HasSight,
-                TargetPlayerId = hollow.TargetPlayerId
+                TargetPlayerId = hollow.TargetPlayerId,
+                Empowered = hollow.Empowered,
+                TriangleSplit = hollow.TriangleSplit,
+                TriangleSplitTimer = hollow.TriangleSplitTimer,
+                TriangleOrbitAngle = hollow.TriangleOrbitAngle,
+                PreviousTriangleOrbitAngle = hollow.PreviousTriangleOrbitAngle,
+                AbilityCooldown = hollow.AbilityCooldown,
+                ProjectileCooldown = hollow.ProjectileCooldown,
+                TeleportFlash = hollow.TeleportFlash
             }).ToArray(),
             Sentries = _sentries.Select(sentry => new OnlineSentrySnapshot
             {
@@ -1415,7 +1434,8 @@ internal sealed partial class GameForm
                 HasSight = sentry.HasSight,
                 Phase = (int)sentry.Phase,
                 PhaseTimer = sentry.PhaseTimer,
-                TargetPlayerId = sentry.TargetPlayerId
+                TargetPlayerId = sentry.TargetPlayerId,
+                Empowered = sentry.Empowered
             }).ToArray(),
             Projectiles = _sentryProjectiles.Select(projectile =>
                 new OnlineProjectileSnapshot
@@ -1427,8 +1447,13 @@ internal sealed partial class GameForm
                     PreviousY = projectile.PreviousPosition.Y,
                     VelocityX = projectile.Velocity.X,
                     VelocityY = projectile.Velocity.Y,
-                    Lifetime = projectile.Lifetime
+                    Lifetime = projectile.Lifetime,
+                    Kind = (int)projectile.Kind,
+                    Damage = projectile.Damage,
+                    IgnoreWalls = projectile.IgnoreWalls,
+                    DestroyWalls = projectile.DestroyWalls
                 }).ToArray(),
+            DestroyedWallBits = EncodeDestroyedWallBits(),
             Cargo = _cargoItems.Select((cargo, index) => new OnlineCargoSnapshot
             {
                 Index = index,
@@ -1813,7 +1838,7 @@ internal sealed partial class GameForm
             {
                 _hollows.Add(new Hollow
                 {
-                    Type = (HollowType)Math.Clamp(value.Type, 0, 2),
+                    Type = (HollowType)Math.Clamp(value.Type, 0, 5),
                     AnimationPhase = value.AnimationPhase,
                     AggressionScale = Math.Clamp(value.AggressionScale, .5f, 3f)
                 });
@@ -1843,6 +1868,14 @@ internal sealed partial class GameForm
             hollow.LookCooldown = value.LookCooldown;
             hollow.HasSight = value.HasSight;
             hollow.TargetPlayerId = value.TargetPlayerId;
+            hollow.Empowered = value.Empowered;
+            hollow.TriangleSplit = value.TriangleSplit;
+            hollow.TriangleSplitTimer = Math.Max(0, value.TriangleSplitTimer);
+            hollow.TriangleOrbitAngle = value.TriangleOrbitAngle;
+            hollow.PreviousTriangleOrbitAngle = value.PreviousTriangleOrbitAngle;
+            hollow.AbilityCooldown = Math.Max(0, value.AbilityCooldown);
+            hollow.ProjectileCooldown = Math.Max(0, value.ProjectileCooldown);
+            hollow.TeleportFlash = Math.Max(0, value.TeleportFlash);
             if (!IsOnlineSimulationHost)
                 RetargetOnlineHollowPresentation(hollow);
         }
@@ -1874,23 +1907,91 @@ internal sealed partial class GameForm
             sentry.Phase = (SentryPhase)Math.Clamp(value.Phase, 0, 3);
             sentry.PhaseTimer = value.PhaseTimer;
             sentry.TargetPlayerId = value.TargetPlayerId;
+            sentry.Empowered = value.Empowered;
+            if (!IsOnlineSimulationHost)
+                RetargetOnlineSentryPresentation(sentry);
         }
 
-        _sentryProjectiles.Clear();
+        var existingProjectiles = _sentryProjectiles
+            .ToDictionary(projectile => projectile.Serial);
+        var reconciledProjectiles = new List<SentryProjectile>(
+            snapshot.Projectiles.Length);
         foreach (var value in snapshot.Projectiles)
         {
-            _sentryProjectiles.Add(new SentryProjectile
+            if (!existingProjectiles.TryGetValue(value.Serial, out var projectile))
             {
-                Serial = value.Serial,
-                Position = new PointF(value.X, value.Y),
-                PreviousPosition = new PointF(value.PreviousX, value.PreviousY),
-                Velocity = new PointF(value.VelocityX, value.VelocityY),
-                Lifetime = value.Lifetime
-            });
+                projectile = new SentryProjectile
+                {
+                    Serial = value.Serial,
+                    Velocity = new PointF(value.VelocityX, value.VelocityY),
+                    Kind = (EnemyProjectileKind)Math.Clamp(value.Kind, 0, 2),
+                    Damage = Math.Max(1, value.Damage),
+                    IgnoreWalls = value.IgnoreWalls,
+                    DestroyWalls = value.DestroyWalls
+                };
+            }
+            projectile.Position = new PointF(value.X, value.Y);
+            projectile.PreviousPosition =
+                new PointF(value.PreviousX, value.PreviousY);
+            projectile.Lifetime = value.Lifetime;
+            if (!IsOnlineSimulationHost)
+                RetargetOnlineProjectilePresentation(projectile);
+            reconciledProjectiles.Add(projectile);
         }
+        _sentryProjectiles.Clear();
+        _sentryProjectiles.AddRange(reconciledProjectiles);
         _sentryProjectileSerial = Math.Max(
             _sentryProjectileSerial,
             snapshot.Projectiles.Select(item => item.Serial).DefaultIfEmpty().Max());
+
+        ApplyDestroyedWallBits(snapshot.DestroyedWallBits);
+    }
+
+    private string EncodeDestroyedWallBits()
+    {
+        if (_maze is null || _maze.DestroyedWalls.Count == 0) return string.Empty;
+        var bitCount = checked(_maze.Width * _maze.Height * 2);
+        var bits = new byte[(bitCount + 7) / 8];
+        foreach (var wall in _maze.DestroyedWalls)
+        {
+            var directionBit = wall.Direction switch
+            {
+                Direction.Right => 0,
+                Direction.Down => 1,
+                _ => -1
+            };
+            if (directionBit < 0) continue;
+            var bitIndex = (wall.Cell.Y * _maze.Width + wall.Cell.X) * 2 +
+                           directionBit;
+            if (bitIndex < 0 || bitIndex >= bitCount) continue;
+            bits[bitIndex >> 3] |= (byte)(1 << (bitIndex & 7));
+        }
+        return Convert.ToBase64String(bits);
+    }
+
+    private void ApplyDestroyedWallBits(string? encoded)
+    {
+        if (_maze is null || string.IsNullOrEmpty(encoded)) return;
+        byte[] bits;
+        try
+        {
+            bits = Convert.FromBase64String(encoded);
+        }
+        catch (FormatException)
+        {
+            return;
+        }
+
+        var bitCount = _maze.Width * _maze.Height * 2;
+        var availableBits = Math.Min(bitCount, bits.Length * 8);
+        for (var bitIndex = 0; bitIndex < availableBits; bitIndex++)
+        {
+            if ((bits[bitIndex >> 3] & 1 << (bitIndex & 7)) == 0) continue;
+            var cellIndex = bitIndex >> 1;
+            var cell = new Point(cellIndex % _maze.Width, cellIndex / _maze.Width);
+            var direction = (bitIndex & 1) == 0 ? Direction.Right : Direction.Down;
+            _maze.TryDestroyWall(cell, direction);
+        }
     }
 
     private void ApplyOnlineObjectiveSnapshot(OnlineWorldSnapshot snapshot)
@@ -2044,6 +2145,7 @@ internal sealed partial class GameForm
         _shopPage = ShopPage.Commands;
         _shopCommandSelection = 0;
         _shopListSelection = 0;
+        ResetPauseMenuState();
         _mode = ScreenMode.Shop;
         StartShopDialogue(
             "There you are, little drone.\nThe other signals keep moving beyond my counter-light.");
@@ -2076,6 +2178,7 @@ internal sealed partial class GameForm
             return;
         }
         _onlineCompletionApplied = true;
+        ResetPauseMenuState();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _wonTime = TimeSpan.FromMilliseconds(Math.Max(0, elapsedMilliseconds));
@@ -2096,6 +2199,7 @@ internal sealed partial class GameForm
         if (_onlineRunCompletedAsCasualty) return;
         _onlineCompletionApplied = true;
         _onlineRunCompletedAsCasualty = true;
+        ResetPauseMenuState();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _failedTime = TimeSpan.FromMilliseconds(

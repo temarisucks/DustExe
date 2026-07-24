@@ -279,12 +279,19 @@ try {
         mapSize: "small",
         mazeStrictness: "normal",
         hollowAmount: "normal",
-        hollowTypes: ["square", "diamond", "hex", "sentry"],
+        hollowTypes: [
+          "square", "diamond", "hex", "sentry", "triangle", "camera", "star"
+        ],
         difficultyScaling: false
       }
     },
     "lobby.state");
   assert(resetState.data.runLevel === 1, "settings change did not reset run level");
+  assert(
+    resetState.data.settings.hollowTypes.includes("triangle") &&
+      resetState.data.settings.hollowTypes.includes("camera") &&
+      resetState.data.settings.hollowTypes.includes("star"),
+    "expanded Hollow types were not preserved by lobby settings");
 
   const fixedStart = await guest.request(
     "lobby.start",

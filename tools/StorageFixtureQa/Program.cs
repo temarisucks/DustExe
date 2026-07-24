@@ -6,6 +6,8 @@ internal static class Program
 {
     private const BindingFlags InstanceFlags =
         BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
+    private const BindingFlags StaticFlags =
+        BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
     private const int DefaultSeedCount = 320;
     private static readonly string[] ExpectedSides = ["Up", "Right", "Down", "Left"];
 
@@ -44,8 +46,11 @@ internal static class Program
         var fixtureCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         var capturedShapes = new HashSet<string>(StringComparer.Ordinal);
         var capturedSides = new HashSet<string>(StringComparer.Ordinal);
+        var capturedDirectionalProfiles = new HashSet<string>(StringComparer.Ordinal);
+        var projectionProfiles = new Dictionary<string, string>(StringComparer.Ordinal);
         var generatedRooms = 0;
         var validatedFixtures = 0;
+        var blockedFixtureChecks = 0;
         var freestandingDirectives = 0;
         var capturedFreestandingDirective = false;
 
@@ -72,6 +77,11 @@ internal static class Program
                 roomShapes.Add(Property<object>(room, "Shape").ToString()!);
 
             var fixtures = CollectFixtures(gameAssembly, gameType, form);
+            blockedFixtureChecks += ValidateDecorationCollision(
+                gameAssembly, gameType, form, maze, rooms, fixtures, sample, seed);
+            ValidateCartographerTarget(gameType, form, maze, sample, seed);
+            CaptureProjectionProfiles(
+                gameAssembly, gameType, projectionProfiles);
             foreach (var fixture in fixtures)
             {
                 var wallMounted = ValidateFixture(
@@ -101,6 +111,22 @@ internal static class Program
                     fixtureCoverage.Add(fixture.Kind, sides);
                 }
                 sides.Add(fixture.WallSide);
+            }
+
+            foreach (var fixture in fixtures.Where(fixture =>
+                         fixture.Kind.StartsWith("PROP/", StringComparison.Ordinal) ||
+                         fixture.Kind == "KIOSK"))
+            {
+                var profileKey = $"{fixture.Kind}/{fixture.WallSide}";
+                if (!capturedDirectionalProfiles.Add(profileKey)) continue;
+                SaveRoomFrame(
+                    gameType,
+                    form,
+                    rooms[fixture.RoomId],
+                    fixture,
+                    Path.Combine(outputDirectory,
+                        $"profile-{FileToken(fixture.Kind)}-" +
+                        $"{FileToken(fixture.WallSide)}.png"));
             }
 
             foreach (var room in rooms.Values)
@@ -159,6 +185,20 @@ internal static class Program
                 fixtureCoverage[kind],
                 ExpectedSides);
         }
+        var expectedDirectionalProfiles = Enum.GetNames(
+                gameAssembly.GetType("Dust.RoomPropKind", throwOnError: true)!)
+            .Select(kind => $"PROP/{kind}")
+            .Concat(["KIOSK"])
+            .SelectMany(kind => ExpectedSides.Select(side => $"{kind}/{side}"))
+            .ToArray();
+        RequireExactCoverage(
+            "authored prop/kiosk profile screenshots",
+            capturedDirectionalProfiles,
+            expectedDirectionalProfiles);
+        Require(projectionProfiles.Count == ExpectedSides.Length &&
+                projectionProfiles.Values.Distinct(StringComparer.Ordinal).Count() ==
+                ExpectedSides.Length,
+            "The renderer did not expose four distinct directional projection profiles.");
 
         RequireExactCoverage(
             "representative room screenshots",
@@ -177,8 +217,12 @@ internal static class Program
             $"Seeds: {seedCount}",
             $"Rooms: {generatedRooms}",
             $"Fixtures: {validatedFixtures}",
+            $"Solid decoration traversal checks: {blockedFixtureChecks}",
             $"Freestanding directive fallbacks: {freestandingDirectives}",
             $"Shapes: {string.Join(", ", roomShapes.OrderBy(value => value))}",
+            $"Directional projections: {string.Join(", ", projectionProfiles
+                .OrderBy(item => SideOrder(item.Key))
+                .Select(item => $"{item.Key}={item.Value}"))}",
             ""
         };
         summary.AddRange(expectedFixtureKinds.Select(kind =>
@@ -248,6 +292,230 @@ internal static class Program
             Property<Point>(instance, "Cell"),
             wallSide!,
             instance);
+    }
+
+    private static int ValidateDecorationCollision(
+        Assembly gameAssembly,
+        Type gameType,
+        object form,
+        object maze,
+        IReadOnlyDictionary<int, object> rooms,
+        IReadOnlyCollection<FixtureSample> fixtures,
+        int sample,
+        long seed)
+    {
+        var blocked = ((IEnumerable)FieldObject(
+                gameType, form, "_blockedRoomFixtureCells"))
+            .Cast<Point>()
+            .ToHashSet();
+        var physicalFixtures = fixtures
+            .Where(fixture =>
+                fixture.Kind.StartsWith("PROP/", StringComparison.Ordinal) ||
+                fixture.Kind == "KIOSK")
+            .ToArray();
+        var expectedBlocked = physicalFixtures
+            .Select(fixture => fixture.Cell)
+            .ToHashSet();
+        Require(blocked.SetEquals(expectedBlocked),
+            $"Seed sample {sample} ({seed}) fixture occupancy mismatch. " +
+            $"Expected {expectedBlocked.Count} solid cells, found {blocked.Count}.");
+        Require(expectedBlocked.Count == physicalFixtures.Length,
+            $"Seed sample {sample} ({seed}) placed two physical decorations on one tile.");
+
+        foreach (var fixture in fixtures.Except(physicalFixtures))
+            Require(!blocked.Contains(fixture.Cell),
+                FailurePrefix(fixture, sample, seed) +
+                "objective fixture was incorrectly made solid decoration.");
+        foreach (var salvage in ((IEnumerable)FieldObject(
+                     gameType, form, "_roomSalvage")).Cast<object>())
+            Require(!blocked.Contains(Property<Point>(salvage, "Cell")),
+                $"Seed sample {sample} ({seed}) made collectible salvage non-traversable.");
+
+        ValidateOpenRoomConnectivity(rooms, blocked, sample, seed);
+
+        var directionType = gameAssembly.GetType(
+            "Dust.Direction", throwOnError: true)!;
+        var remotePlayerType = gameAssembly.GetType(
+            "Dust.OnlineRemotePlayer", throwOnError: true)!;
+        var mazeCanMove = maze.GetType().GetMethod("CanMove", InstanceFlags)!;
+        var buildTraversal = gameType.GetMethod(
+            "BuildPlayerTraversal", InstanceFlags)!;
+        var moveOnline = gameType.GetMethod(
+            "TryMoveOnlinePlayer", InstanceFlags)!;
+        var checks = 0;
+
+        foreach (var fixture in physicalFixtures)
+        {
+            var room = rooms[fixture.RoomId];
+            var neighbor = ExpectedSides
+                .Select(side => Step(fixture.Cell, side))
+                .Where(cell =>
+                    Property<bool>(room, "Contains", cell) &&
+                    !blocked.Contains(cell))
+                .Select(cell => new
+                {
+                    Cell = cell,
+                    Direction = DirectionName(cell, fixture.Cell)
+                })
+                .FirstOrDefault(candidate =>
+                {
+                    var direction = Enum.Parse(
+                        directionType, candidate.Direction);
+                    return (bool)mazeCanMove.Invoke(
+                        maze, [candidate.Cell, direction])!;
+                });
+            Require(neighbor is not null,
+                FailurePrefix(fixture, sample, seed) +
+                "has no open interaction apron.");
+
+            var moveDirection = Enum.Parse(directionType, neighbor!.Direction);
+            SetField(gameType, form, "_playerCell", neighbor.Cell);
+            SetField(gameType, form, "_ghostFormTimer", 3.5f);
+            var traversalArguments = new object[] { moveDirection, false };
+            var traversal = (IEnumerable)buildTraversal.Invoke(
+                form, traversalArguments)!;
+            Require(!traversal.Cast<object>().Any(),
+                FailurePrefix(fixture, sample, seed) +
+                "allowed local Ghost Form traversal onto a decoration tile.");
+
+            var remote = Activator.CreateInstance(remotePlayerType)!;
+            SetProperty(remote, "PlayerId", "qa-remote");
+            SetProperty(remote, "Username", "QA REMOTE");
+            SetProperty(remote, "Cell", neighbor.Cell);
+            SetProperty(remote, "PreviousCell", neighbor.Cell);
+            SetProperty(remote, "VisualCell",
+                new PointF(neighbor.Cell.X, neighbor.Cell.Y));
+            SetProperty(remote, "PreviousVisualCell",
+                new PointF(neighbor.Cell.X, neighbor.Cell.Y));
+            SetProperty(remote, "MoveFrom",
+                new PointF(neighbor.Cell.X, neighbor.Cell.Y));
+            SetProperty(remote, "MoveTo",
+                new PointF(neighbor.Cell.X, neighbor.Cell.Y));
+            SetProperty(remote, "MoveProgress", 1f);
+            SetProperty(remote, "GhostFormTimer", 3.5f);
+            moveOnline.Invoke(form, [remote, moveDirection]);
+            Require(Property<Point>(remote, "Cell") == neighbor.Cell,
+                FailurePrefix(fixture, sample, seed) +
+                "allowed host-authoritative online traversal onto a decoration tile.");
+            checks++;
+        }
+
+        SetField(gameType, form, "_ghostFormTimer", 0f);
+        return checks;
+    }
+
+    private static void ValidateOpenRoomConnectivity(
+        IReadOnlyDictionary<int, object> rooms,
+        IReadOnlySet<Point> blocked,
+        int sample,
+        long seed)
+    {
+        foreach (var room in rooms.Values)
+        {
+            var roomId = Property<int>(room, "Id");
+            var cells = ((IEnumerable)Property<object>(room, "Cells"))
+                .Cast<Point>()
+                .ToHashSet();
+            var door = Property<Point>(room, "DoorCell");
+            Require(!blocked.Contains(door),
+                $"Seed sample {sample} ({seed}), room {roomId}: " +
+                "the storage door route is blocked by decoration.");
+
+            var openCells = cells.Where(cell => !blocked.Contains(cell)).ToHashSet();
+            var reached = new HashSet<Point> { door };
+            var queue = new Queue<Point>();
+            queue.Enqueue(door);
+            while (queue.Count > 0)
+            {
+                var cell = queue.Dequeue();
+                foreach (var side in ExpectedSides)
+                {
+                    var next = Step(cell, side);
+                    if (!openCells.Contains(next) || !reached.Add(next)) continue;
+                    queue.Enqueue(next);
+                }
+            }
+            Require(reached.SetEquals(openCells),
+                $"Seed sample {sample} ({seed}), room {roomId}: " +
+                "solid decorations disconnected a storage-room route.");
+        }
+    }
+
+    private static void ValidateCartographerTarget(
+        Type gameType,
+        object form,
+        object maze,
+        int sample,
+        long seed)
+    {
+        var blocked = ((IEnumerable)FieldObject(
+                gameType, form, "_blockedRoomFixtureCells"))
+            .Cast<Point>()
+            .ToHashSet();
+        var survivor = gameType.GetField(
+            "_survivorObjective", InstanceFlags)!.GetValue(form);
+        if (survivor is not null)
+        {
+            var isSurvivorBlocking = gameType.GetMethod(
+                "IsSurvivorBlockingCell", InstanceFlags)!;
+            foreach (var property in new[] { "RequesterCell", "WorkerCell" })
+            {
+                var cell = Property<Point>(survivor, property);
+                if ((bool)isSurvivorBlocking.Invoke(form, [cell])!)
+                    blocked.Add(cell);
+            }
+        }
+
+        var width = Property<int>(maze, "Width");
+        var height = Property<int>(maze, "Height");
+        var expected = width * height - blocked.Count;
+        var actual = (int)gameType.GetMethod(
+                "CartographerTileTarget", InstanceFlags)!
+            .Invoke(form, null)!;
+        Require(actual == expected,
+            $"Seed sample {sample} ({seed}) Cartographer target was {actual}; " +
+            $"expected {expected} after excluding solid fixtures.");
+    }
+
+    private static void CaptureProjectionProfiles(
+        Assembly gameAssembly,
+        Type gameType,
+        IDictionary<string, string> profiles)
+    {
+        var directionType = gameAssembly.GetType(
+            "Dust.Direction", throwOnError: true)!;
+        var getProfile = gameType.GetMethod(
+            "GetRoomFixtureProfile", StaticFlags)!;
+        foreach (var side in ExpectedSides)
+        {
+            var profile = getProfile.Invoke(
+                null, [Enum.Parse(directionType, side)])!;
+            var signature = string.Join("/",
+                Property<float>(profile, "TangentScale")
+                    .ToString("0.00", CultureInfo.InvariantCulture),
+                Property<float>(profile, "DepthScale")
+                    .ToString("0.00", CultureInfo.InvariantCulture),
+                Property<float>(profile, "Shear")
+                    .ToString("0.00", CultureInfo.InvariantCulture),
+                Property<int>(profile, "Presentation")
+                    .ToString(CultureInfo.InvariantCulture));
+            profiles[side] = signature;
+        }
+    }
+
+    private static string DirectionName(Point from, Point to)
+    {
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        return (dx, dy) switch
+        {
+            (0, -1) => "Up",
+            (1, 0) => "Right",
+            (0, 1) => "Down",
+            (-1, 0) => "Left",
+            _ => throw new InvalidOperationException(
+                $"Cells {from} and {to} are not cardinal neighbors.")
+        };
     }
 
     private static bool ValidateFixture(
@@ -439,7 +707,11 @@ internal static class Program
     private static string FileToken(string value) => value switch
     {
         "LShape" => "l-shape",
-        _ => value.ToLowerInvariant()
+        _ => value
+            .Replace("PROP/", "prop-", StringComparison.Ordinal)
+            .Replace("DIRECTIVE/", "directive-", StringComparison.Ordinal)
+            .Replace('/', '-')
+            .ToLowerInvariant()
     };
 
     private static void RequireExactCoverage(
@@ -464,6 +736,9 @@ internal static class Program
 
     private static void SetField(Type type, object instance, string name, object value) =>
         type.GetField(name, InstanceFlags)!.SetValue(instance, value);
+
+    private static void SetProperty(object instance, string name, object value) =>
+        instance.GetType().GetProperty(name, InstanceFlags)!.SetValue(instance, value);
 
     private static T Property<T>(object instance, string name) =>
         (T)instance.GetType().GetProperty(name, InstanceFlags)!.GetValue(instance)!;

@@ -130,13 +130,20 @@ internal sealed partial class GameForm
         var shell = new RectangleF(42, 54, DesignWidth - 84, DesignHeight - 108);
         DrawMenuConsoleShell(g, shell, "ROOM CONTROL / NONCLINICAL ADJUSTMENT");
 
-        LabFont.Draw(g, "SETTINGS", 72, 74, 3, C.Bone);
+        LabFont.Draw(g, _pauseSettingsOpen ? "PAUSE / SETTINGS" : "SETTINGS",
+            72, 74, 3, C.Bone);
 
         var meterBay = new RectangleF(72, 132, 362, 506);
         DrawCutPanel(g, meterBay, Color.FromArgb(10, 17, 17), Color.FromArgb(73, 86, 73), 16, 4);
         DrawPanelBolts(g, meterBay, C.Steel);
         LabFont.Draw(g, "ENVIRONMENT TRACE", meterBay.X + 24, meterBay.Y + 24, 2, C.Signal);
-        LabFont.Draw(g, "NO SUBJECT PRESENT", meterBay.X + 24, meterBay.Y + 55, 1, C.Steel);
+        var settingsStatus = !_pauseSettingsOpen
+            ? "NO SUBJECT PRESENT"
+            : IsOnlineGameplayActive
+                ? "NETWORK LIVE / SUBJECT EXPOSED"
+                : "SUBJECT HOLD / CLOCK SUSPENDED";
+        LabFont.Draw(g, settingsStatus, meterBay.X + 24, meterBay.Y + 55, 1,
+            _pauseSettingsOpen && IsOnlineGameplayActive ? C.Red : C.Steel);
 
         var scope = new RectangleF(meterBay.X + 24, meterBay.Y + 91, meterBay.Width - 48, 160);
         DrawCutPanel(g, scope, Color.FromArgb(4, 10, 10), Color.FromArgb(52, 68, 59), 10, 3);

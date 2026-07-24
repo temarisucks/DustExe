@@ -26,6 +26,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="tools\ObjectiveQa\**\*.cs" />
+    <Compile Remove="tools\EnemyExpansionQa\**\*.cs" />
+    <Compile Remove="tools\PauseQa\**\*.cs" />
     <Compile Remove="tools\StorageFixtureQa\**\*.cs" />
     <Compile Remove="tools\TutorialQa\**\*.cs" />
     <Compile Remove="OnlineServer\**\*.cs" />

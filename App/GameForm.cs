@@ -190,6 +190,11 @@ internal sealed partial class GameForm : Form
         MouseLeave += (_, _) => ResetHover();
         FormClosing += (_, _) =>
         {
+            if (_pauseMenuOpen)
+            {
+                SettleOfflinePauseClock();
+                ResetPauseMenuState();
+            }
             CloseMissionDossier(playSound: false);
             if (_mode is ScreenMode.Playing or ScreenMode.Shop) RecordAchievementAbandonment();
             _loadingCancellation?.Cancel();
@@ -212,6 +217,14 @@ internal sealed partial class GameForm : Form
         ProcessOnlineUiQueue();
         _audio.UpdateMusic();
         TickOnlineGameplay(deltaTime);
+        if (OfflinePauseFreezesGame)
+        {
+            // A local field hold freezes every gameplay clock and simulation
+            // system. Online runs deliberately continue through this point so
+            // the host, remote players, and enemies never stall for one client.
+            Invalidate();
+            return;
+        }
         if (_mode == ScreenMode.Playing && _missionDossierOpen &&
             !IsOnlineGameplayActive)
         {

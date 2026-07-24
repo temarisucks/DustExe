@@ -12,6 +12,12 @@ internal sealed partial class GameForm
             return;
         }
 
+        if (IsPauseMenuActive)
+        {
+            HandlePauseKey(e);
+            return;
+        }
+
         switch (_mode)
         {
             case ScreenMode.TutorialOffer:
@@ -130,8 +136,15 @@ internal sealed partial class GameForm
     {
         if (_missionDossierOpen)
         {
-            if (e.KeyCode is Keys.Q or Keys.Escape)
+            if (e.KeyCode == Keys.Escape)
+            {
+                CloseMissionDossier(playSound: false);
+                OpenPauseMenu();
+            }
+            else if (e.KeyCode == Keys.Q)
+            {
                 CloseMissionDossier();
+            }
             ConsumeKey(e);
             return;
         }
@@ -148,25 +161,7 @@ internal sealed partial class GameForm
         }
         if (e.KeyCode == Keys.Escape)
         {
-            if (_onlineMatchActive)
-                LeaveOnlineLobby();
-            else
-            {
-                _audio.Play(AudioCue.Confirm);
-                EnterTitle();
-            }
-            ConsumeKey(e);
-            return;
-        }
-        if (e.KeyCode == Keys.R)
-        {
-            if (_onlineMatchActive)
-            {
-                _onlineStatus = "RESEED DISABLED DURING ONLINE RUN";
-                _audio.Play(AudioCue.Select);
-            }
-            else
-                StartGame(preserveLevel: true);
+            OpenPauseMenu();
             ConsumeKey(e);
             return;
         }
@@ -244,7 +239,7 @@ internal sealed partial class GameForm
 
     private void HandleFailedKey(KeyEventArgs e)
     {
-        if (e.KeyCode is Keys.Enter or Keys.Space or Keys.R)
+        if (e.KeyCode is Keys.Enter or Keys.Space)
         {
             if (_onlineMatchActive) FinishOnlineRunToLobby();
             else
@@ -294,7 +289,11 @@ internal sealed partial class GameForm
             return;
         }
 
-        switch (_mode)
+        if (IsPauseMenuActive)
+        {
+            HandlePauseMouseMove(hit);
+        }
+        else switch (_mode)
         {
             case ScreenMode.TutorialOffer:
             case ScreenMode.Tutorial:
@@ -365,6 +364,11 @@ internal sealed partial class GameForm
         if (_closeButton.Contains(hit)) { Close(); return; }
         if (_minButton.Contains(hit)) { WindowState = FormWindowState.Minimized; return; }
 
+        if (IsPauseMenuActive)
+        {
+            HandlePauseMouseDown(hit);
+            return;
+        }
         if (_mode is ScreenMode.TutorialOffer or ScreenMode.Tutorial)
         {
             if (HandleTutorialMouseDown(hit)) return;
@@ -406,13 +410,13 @@ internal sealed partial class GameForm
             }
             if (_runStartButton.Contains(hit))
             {
-                _runSettingsSelection = 8;
+                _runSettingsSelection = 11;
                 ActivateRunSettingsSelection();
                 return;
             }
             if (_backButton.Contains(hit))
             {
-                _runSettingsSelection = 9;
+                _runSettingsSelection = 12;
                 ActivateRunSettingsSelection();
                 return;
             }
@@ -616,6 +620,7 @@ internal sealed partial class GameForm
         if (_hoverMissionDossier) return 395;
         if (_hoverMissionDossierClose) return 396;
         if (_hoverBack) return 400;
+        if (_hoverPause >= 0) return 410 + _hoverPause;
         if (_hoverOverlay >= 0) return 500 + _hoverOverlay;
         if (_onlineHover >= 0) return 600 + _onlineHover;
         return -1;

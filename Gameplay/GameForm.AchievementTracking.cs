@@ -143,14 +143,17 @@ internal sealed partial class GameForm
     private int CartographerTileTarget()
     {
         if (_maze is null) return int.MaxValue;
-        var blocked = 0;
+        // Installed room dressing is intentionally not traversable and therefore
+        // must not make the every-tile achievement mathematically impossible.
+        var blocked = new HashSet<Point>(_blockedRoomFixtureCells);
         if (_survivorObjective is { } objective)
         {
-            if (IsSurvivorBlockingCell(objective.RequesterCell)) blocked++;
-            if (objective.WorkerCell != objective.RequesterCell &&
-                IsSurvivorBlockingCell(objective.WorkerCell)) blocked++;
+            if (IsSurvivorBlockingCell(objective.RequesterCell))
+                blocked.Add(objective.RequesterCell);
+            if (IsSurvivorBlockingCell(objective.WorkerCell))
+                blocked.Add(objective.WorkerCell);
         }
-        return Math.Max(0, _maze.Width * _maze.Height - blocked);
+        return Math.Max(0, _maze.Width * _maze.Height - blocked.Count);
     }
 
     private void RecordAchievementWin()
@@ -315,6 +318,7 @@ internal sealed partial class GameForm
     }
 
     private bool IsLocalAchievementPursuer(Hollow hollow) =>
-        !IsOnlineGameplayActive ||
-        hollow.TargetPlayerId == _onlinePlayerId;
+        hollow.Type != HollowType.Camera &&
+        (!IsOnlineGameplayActive ||
+         hollow.TargetPlayerId == _onlinePlayerId);
 }

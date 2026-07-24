@@ -51,6 +51,7 @@ internal sealed partial class GameForm
         _hoverShopRow = -1;
         _hoverMissionDossier = false;
         _hoverMissionDossierClose = false;
+        _hoverPause = -1;
         _hoverOverlay = -1;
         _onlineHover = -1;
         _hoverBack = false;

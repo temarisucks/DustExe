@@ -153,10 +153,10 @@ try {
     Advance-DustRunOption 1 $RunStrictnessIndex 3 545 358
     Advance-DustRunOption 2 $RunHollowAmountIndex 4 545 462
     $disabledTypes = @($DisableHollowTypeIndexes -split '[,; ]+' |
-        Where-Object { $_ -match '^[0-3]$' } | ForEach-Object { [int]$_ } | Select-Object -Unique)
-    if ($disabledTypes.Count -gt 3) { $disabledTypes = $disabledTypes[0..2] }
+        Where-Object { $_ -match '^[0-6]$' } | ForEach-Object { [int]$_ } | Select-Object -Unique)
+    if ($disabledTypes.Count -gt 6) { $disabledTypes = $disabledTypes[0..5] }
     foreach ($typeIndex in $disabledTypes) {
-        Send-DustClick 1090 (230 + 82 * $typeIndex)
+        Send-DustClick 1090 (210 + 49 * $typeIndex)
         Start-Sleep -Milliseconds 60
     }
     if ($DisableDifficultyScaling) {

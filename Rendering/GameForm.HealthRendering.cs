@@ -91,7 +91,7 @@ internal sealed partial class GameForm
         DrawFailureReadout(g, reportX, reportY + 116, "MISSION PROPERTY",
             _cargoLostOnFailure ? "RELEASED IN CHAMBER" : "NO LATCH DETECTED", false);
         var disposition = !_onlineMatchActive
-            ? "RESEED OR EJECT"
+            ? "RETRY OR EJECT"
             : IsOnlineLobbyHost ? "RETURN OR LEAVE" : "WAIT OR LEAVE";
         DrawFailureReadout(g, reportX, reportY + 174, "DISPOSITION",
             disposition, true);
@@ -109,7 +109,7 @@ internal sealed partial class GameForm
         _againButton = new RectangleF(panel.X + 42, panel.Bottom - 84, 420, 54);
         _menuButton = new RectangleF(panel.Right - 276, panel.Bottom - 84, 234, 54);
         var primaryLabel = !_onlineMatchActive
-            ? "RESEED MAZE"
+            ? "RETRY MAZE"
             : IsOnlineLobbyHost ? "RETURN TO LOBBY" : "WAIT FOR HOST";
         var exitLabel = _onlineMatchActive ? "LEAVE LOBBY" : "EJECT";
         DrawLatchButton(g, _againButton, primaryLabel, _hoverOverlay == 0);

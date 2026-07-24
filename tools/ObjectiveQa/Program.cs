@@ -332,8 +332,8 @@ internal static class Program
 
         var snapshot = gameType.GetMethod("BuildOnlineSnapshot", InstanceFlags)!
             .Invoke(form, null)!;
-        Require(Property<int>(snapshot, "ProtocolVersion") == 2,
-            "The personal-objective gameplay protocol was not bumped to version 2.");
+        Require(Property<int>(snapshot, "ProtocolVersion") == 3,
+            "The expanded-enemy gameplay protocol was not bumped to version 3.");
         var snapshotDirectives = ((IEnumerable)Property<object>(
             snapshot, "FieldDirectives")).Cast<object>().ToArray();
         Require(snapshotDirectives.Length == 16,
@@ -366,6 +366,60 @@ internal static class Program
             "The guest Hollow presentation snapped instead of interpolating.");
         Require(Math.Abs(authoritative.X - 3.7f) < .0001f,
             "Presentation smoothing altered authoritative Hollow state.");
+        SetProperty(hollow, "PresentationCell", new PointF(3.2f, 3));
+        SetProperty(hollow, "VisualCell", new PointF(4.2f, 3));
+        SetProperty(hollow, "FacingAngle", .85f);
+        SetProperty(hollow, "TeleportFlash", .42f);
+        gameType.GetMethod("RetargetOnlineHollowPresentation", InstanceFlags)!
+            .Invoke(form, [hollow]);
+        var teleportedPresentation = Property<PointF>(hollow, "PresentationCell");
+        Require(
+            Math.Abs(teleportedPresentation.X - 4.2f) < .0001f &&
+            Math.Abs(Property<float>(hollow, "PresentationFacingAngle") - .85f) <
+            .0001f,
+            "A guest Hollow slid through a short authoritative teleport.");
+        SetProperty(hollow, "TeleportFlash", 0f);
+
+        var sentries = ((IEnumerable)FieldObject(gameType, form, "_sentries"))
+            .Cast<object>().ToArray();
+        Require(sentries.Length > 0,
+            "The sentry presentation probe could not find a generated Turret.");
+        var sentry = sentries[0];
+        SetProperty(sentry, "PresentationReady", false);
+        SetProperty(sentry, "FacingAngle", 0f);
+        gameType.GetMethod("RetargetOnlineSentryPresentation", InstanceFlags)!
+            .Invoke(form, [sentry]);
+        SetProperty(sentry, "FacingAngle", .5f);
+        gameType.GetMethod("RetargetOnlineSentryPresentation", InstanceFlags)!
+            .Invoke(form, [sentry]);
+
+        var projectileType = gameAssembly.GetType(
+            "Dust.SentryProjectile", throwOnError: true)!;
+        var projectile = Activator.CreateInstance(projectileType)!;
+        SetProperty(projectile, "Serial", 991);
+        SetProperty(projectile, "Position", new PointF(2, 2));
+        SetProperty(projectile, "PreviousPosition", new PointF(2, 2));
+        SetProperty(projectile, "Velocity", new PointF(10, 0));
+        SetProperty(projectile, "Lifetime", 1f);
+        SetProperty(projectile, "Damage", 1);
+        var projectiles = (IList)FieldObject(gameType, form, "_sentryProjectiles");
+        projectiles.Clear();
+        projectiles.Add(projectile);
+        gameType.GetMethod("RetargetOnlineProjectilePresentation", InstanceFlags)!
+            .Invoke(form, [projectile]);
+        SetProperty(projectile, "Position", new PointF(3, 2));
+        gameType.GetMethod("RetargetOnlineProjectilePresentation", InstanceFlags)!
+            .Invoke(form, [projectile]);
+        gameType.GetMethod("UpdateOnlineEnemyProjectilePresentation", InstanceFlags)!
+            .Invoke(form, [.04f]);
+        var presentedFacing = Property<float>(sentry, "PresentationFacingAngle");
+        Require(presentedFacing > 0 && presentedFacing < .5f,
+            "Guest Turret rotation snapped instead of interpolating.");
+        var presentedShot = Property<PointF>(projectile, "PresentationPosition");
+        Require(presentedShot.X > 2 && presentedShot.X < 3.4f,
+            "Guest projectile presentation snapped instead of extrapolating.");
+        Require(Math.Abs(Property<PointF>(projectile, "Position").X - 3) < .0001f,
+            "Projectile presentation smoothing altered authoritative state.");
 
         var screenModeType = gameAssembly.GetType(
             "Dust.ScreenMode", throwOnError: true)!;

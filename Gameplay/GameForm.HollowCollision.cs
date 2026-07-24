@@ -9,15 +9,40 @@ internal sealed partial class GameForm
             (!IsOnlineSimulationHost || IsOnlineLocalPlayerProtected)) return;
         foreach (var hollow in _hollows)
         {
-            var separationSquared = SweptSeparationSquared(
-                _previousVisualCell, _visualCell, hollow.PreviousVisualCell, hollow.VisualCell);
-            var visualContact = separationSquared <= .27f;
-            var settledTogether = _moveProgress >= 1 && !hollow.IsMoving && _playerCell == hollow.Cell;
+            if (hollow.Type == HollowType.Camera) continue;
+            var visualContact = HollowMakesContact(
+                hollow, _previousVisualCell, _visualCell);
+            var settledTogether = !hollow.TriangleSplit &&
+                                  _moveProgress >= 1 && !hollow.IsMoving &&
+                                  _playerCell == hollow.Cell;
             if (!visualContact && !settledTogether) continue;
-            BeginHollowHit();
+            BeginHollowHit(HollowContactDamage(hollow));
             break;
         }
     }
+
+    private static bool HollowMakesContact(
+        Hollow hollow,
+        PointF playerFrom,
+        PointF playerTo)
+    {
+        if (hollow.Type != HollowType.Triangle || !hollow.TriangleSplit)
+            return SweptSeparationSquared(
+                playerFrom, playerTo,
+                hollow.PreviousVisualCell, hollow.VisualCell) <= .27f;
+
+        var previousMembers = PreviousTriangleMemberPositions(hollow);
+        var currentMembers = TriangleMemberPositions(hollow);
+        for (var index = 0; index < currentMembers.Length; index++)
+            if (SweptSeparationSquared(
+                    playerFrom, playerTo,
+                    previousMembers[index], currentMembers[index]) <= .27f)
+                return true;
+        return false;
+    }
+
+    private static int HollowContactDamage(Hollow hollow) =>
+        hollow.Type == HollowType.Square && hollow.Empowered ? 2 : 1;
 
     private static float SweptSeparationSquared(PointF playerFrom, PointF playerTo,
         PointF hollowFrom, PointF hollowTo)
@@ -35,7 +60,7 @@ internal sealed partial class GameForm
         return closestX * closestX + closestY * closestY;
     }
 
-    private void BeginHollowHit(bool causedByHollow = true)
+    private void BeginHollowHit(int damage = 1, bool causedByHollow = true)
     {
         if (TryConsumeShopProtection()) return;
         var wasCarryingCargo = _cargoItems.Any(item =>
@@ -43,10 +68,12 @@ internal sealed partial class GameForm
                 ? item.CarrierPlayerId == _onlinePlayerId
                 : item.Carried);
         DropCarriedCargo();
-        _damageTaken++;
-        _totalDamageSustained++;
+        damage = Math.Max(1, damage);
+        _damageTaken += damage;
+        _totalDamageSustained += damage;
         RecordHitForAchievements(causedByHollow);
         TryConsumeShopRepairReserve();
+        _damageTaken = Math.Min(_damageTaken, GetMaximumHealth());
         _failurePending = _damageTaken >= GetMaximumHealth();
         if (_failurePending) _cargoLostOnFailure = wasCarryingCargo;
         _hitEffect = 1.16f;
@@ -76,6 +103,7 @@ internal sealed partial class GameForm
         {
             var cell = new Point(x, y);
             if (cell == _exitCell || cell == oldLogicalCell || cell == oldVisualCell) continue;
+            if (IsRoomDecorationBlockingCell(cell)) continue;
             if (IsSurvivorBlockingCell(cell)) continue;
             if (_maze.GetRoomAt(cell) is not null) continue;
             if (_hollows.Any(hollow => hollow.Cell == cell || hollow.TargetCell == cell)) continue;

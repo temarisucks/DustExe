@@ -5,6 +5,8 @@ internal sealed partial class GameForm
     private void StartGame(bool advanceLevel = false, bool preserveLevel = false)
     {
         if (_mode == ScreenMode.Loading) return;
+        if (_pauseMenuOpen) SettleOfflinePauseClock();
+        ResetPauseMenuState();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         if (_mode == ScreenMode.Playing) RecordAchievementAbandonment();
@@ -182,6 +184,8 @@ internal sealed partial class GameForm
                 Math.Max(0, (long)(DateTime.Now - _startedAt).TotalMilliseconds));
             return;
         }
+        if (_pauseMenuOpen) SettleOfflinePauseClock();
+        ResetPauseMenuState();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _wonTime = DateTime.Now - _startedAt;

@@ -176,6 +176,9 @@ internal sealed partial class GameForm
             var destination = _maze.Move(cursor, direction);
             var canPhase = IsGhostFormActive && InsideMaze(destination);
             if (!normallyOpen && !canPhase) break;
+            // Phase coils open wall boundaries; they do not dematerialize
+            // installed machinery. A decoration tile is always solid.
+            if (IsRoomDecorationBlockingCell(destination)) break;
             if (IsSurvivorBlockingCell(destination)) break;
 
             usedGhostForm |= !normallyOpen;

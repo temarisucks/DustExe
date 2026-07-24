@@ -2,6 +2,8 @@ namespace Dust;
 
 internal enum Direction { Up, Right, Down, Left }
 
+internal readonly record struct DestroyedMazeWall(Point Cell, Direction Direction);
+
 internal sealed class Maze
 {
     private static readonly (int dx, int dy)[] Delta = [(0, -1), (1, 0), (0, 1), (-1, 0)];
@@ -9,11 +11,14 @@ internal sealed class Maze
     private readonly CargoRoom?[,] _roomByCell;
     private readonly List<CargoRoom> _rooms = [];
     private readonly IReadOnlyList<CargoRoom> _roomView;
+    private readonly List<DestroyedMazeWall> _destroyedWalls = [];
+    private readonly IReadOnlyList<DestroyedMazeWall> _destroyedWallView;
 
     public int Width { get; }
     public int Height { get; }
     public MazeStrictness Strictness { get; }
     public IReadOnlyList<CargoRoom> Rooms => _roomView;
+    public IReadOnlyList<DestroyedMazeWall> DestroyedWalls => _destroyedWallView;
 
     public Maze(int width, int height, Random random, int? cargoRoomCount = null,
         MazeStrictness strictness = MazeStrictness.Normal)
@@ -28,6 +33,7 @@ internal sealed class Maze
         _walls = new bool[width, height, 4];
         _roomByCell = new CargoRoom?[width, height];
         _roomView = _rooms.AsReadOnly();
+        _destroyedWallView = _destroyedWalls.AsReadOnly();
 
         for (var x = 0; x < width; x++)
         for (var y = 0; y < height; y++)
@@ -55,6 +61,36 @@ internal sealed class Maze
     }
 
     public bool HasWall(int x, int y, Direction direction) => _walls[x, y, (int)direction];
+
+    /// <summary>
+    /// Opens a live, internal wall and records the canonical edge so an online
+    /// authority checkpoint can reproduce the damage after host migration.
+    /// The outer shell is never destructible.
+    /// </summary>
+    public bool TryDestroyWall(Point cell, Direction direction)
+    {
+        if (!IsInBounds(cell) || !HasWall(cell.X, cell.Y, direction)) return false;
+        var next = Move(cell, direction);
+        if (!IsInBounds(next)) return false;
+
+        var canonicalCell = cell;
+        var canonicalDirection = direction;
+        if (direction == Direction.Left)
+        {
+            canonicalCell = next;
+            canonicalDirection = Direction.Right;
+        }
+        else if (direction == Direction.Up)
+        {
+            canonicalCell = next;
+            canonicalDirection = Direction.Down;
+        }
+
+        RemoveWall(cell.X, cell.Y, direction);
+        var destroyed = new DestroyedMazeWall(canonicalCell, canonicalDirection);
+        if (!_destroyedWalls.Contains(destroyed)) _destroyedWalls.Add(destroyed);
+        return true;
+    }
 
     public int GetOpeningMask(int x, int y)
     {
@@ -98,13 +134,17 @@ internal sealed class Maze
     }
 
     /// <summary>
-    /// Identifies the exact outside-to-inside door crossing that should reveal a room.
-    /// Merely standing beside a room or entering one of its cells by any other means does not qualify.
+    /// Identifies an open outside-to-inside crossing that should reveal a room.
+    /// This is normally its authored door, but an empowered turret can create a
+    /// second physical breach during play.
     /// </summary>
     public bool TryGetEnteredRoom(Point from, Point to, out CargoRoom room)
     {
         var found = GetRoomAt(to);
-        if (found is null || !found.IsEntry(from, to))
+        var enteredThroughDoor = found?.IsEntry(from, to) == true;
+        var enteredThroughBreach = found is not null && GetRoomAt(from) is null &&
+                                   IsOpenAdjacentTransition(from, to);
+        if (found is null || !enteredThroughDoor && !enteredThroughBreach)
         {
             room = null!;
             return false;
@@ -112,6 +152,22 @@ internal sealed class Maze
 
         room = found;
         return true;
+    }
+
+    private bool IsOpenAdjacentTransition(Point from, Point to)
+    {
+        if (!IsInBounds(from) || !IsInBounds(to)) return false;
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var direction = (dx, dy) switch
+        {
+            (0, -1) => Direction.Up,
+            (1, 0) => Direction.Right,
+            (0, 1) => Direction.Down,
+            (-1, 0) => Direction.Left,
+            _ => (Direction?)null
+        };
+        return direction.HasValue && CanMove(from, direction.Value);
     }
 
     public Point FindFarthest(Point start)

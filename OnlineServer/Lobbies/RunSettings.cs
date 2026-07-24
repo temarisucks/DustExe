@@ -14,7 +14,7 @@ internal sealed record RunSettings(
         "medium",
         "normal",
         "normal",
-        ["square", "diamond", "hex", "sentry"],
+        ["square", "diamond", "hex", "sentry", "triangle", "camera", "star"],
         true);
 
     public static RunSettings Parse(JsonElement element)
@@ -48,7 +48,7 @@ internal sealed record RunSettings(
             .Select(type => Normalize(
                 type,
                 "hollowTypes",
-                ["square", "diamond", "hex", "sentry"]))
+                ["square", "diamond", "hex", "sentry", "triangle", "camera", "star"]))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         if (hollowTypes.Length == 0 && hollowAmount != "none")

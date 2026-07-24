@@ -5,6 +5,11 @@ internal sealed partial class GameForm
     private void EnterTitle(bool resetSelection = false)
     {
         var previousMode = _mode;
+        if (_pauseMenuOpen)
+        {
+            SettleOfflinePauseClock();
+            ResetPauseMenuState();
+        }
         DisconnectOnlineSessionForTitle();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();

@@ -58,6 +58,11 @@ internal sealed partial class GameForm
                 case ScreenMode.Won:
                 case ScreenMode.Failed:
                     DrawTrialFeed(g);
+                    if (IsPauseMenuActive)
+                    {
+                        if (_pauseSettingsOpen) DrawSettingsConsole(g);
+                        else DrawPauseConsole(g);
+                    }
                     break;
             }
             DrawFeedDamage(g);

@@ -16,19 +16,23 @@ internal sealed partial class GameForm
             if (IsCellConcealed(sentry.Cell)) continue;
             var origin = new PointF(sentry.Cell.X, sentry.Cell.Y);
             var screenOrigin = CellCenter(origin);
-            var reach = SentryRunViewDistance * _cellSize;
+            var viewDistance = SentryViewDistanceFor(sentry);
+            var fieldOfView = SentryFieldOfViewFor(sentry);
+            var renderFacing = SentryRenderFacing(sentry);
+            var reach = viewDistance * _cellSize;
             if (!RectangleF.Inflate(_mazeRect, reach, reach).Contains(screenOrigin)) continue;
 
             const float innerRadius = .34f;
-            var rayOffsets = BuildSentryVisionRayOffsets(origin, sentry.FacingAngle);
+            var rayOffsets = BuildSentryVisionRayOffsets(
+                origin, renderFacing, viewDistance, fieldOfView, sentry.Empowered);
             var outer = new PointF[rayOffsets.Count];
             var inner = new PointF[rayOffsets.Count];
             for (var index = 0; index < rayOffsets.Count; index++)
             {
                 var offset = rayOffsets[index];
-                var angle = sentry.FacingAngle + offset;
+                var angle = renderFacing + offset;
                 var distance = RaycastVisionDistance(
-                    origin, angle, SentryRunViewDistance, ignoreWalls: false);
+                    origin, angle, viewDistance, ignoreWalls: sentry.Empowered);
                 distance = Math.Max(innerRadius, distance);
                 outer[index] = SentrySnapToFeed(CellCenter(new PointF(
                     origin.X + MathF.Cos(angle) * distance,
@@ -42,10 +46,10 @@ internal sealed partial class GameForm
             (sentry.HasSight ? firingFields : scanningFields).AddPolygon(field);
 
             var centerDistance = RaycastVisionDistance(
-                origin, sentry.FacingAngle, SentryRunViewDistance, ignoreWalls: false);
+                origin, renderFacing, viewDistance, ignoreWalls: sentry.Empowered);
             var beamEnd = CellCenter(new PointF(
-                origin.X + MathF.Cos(sentry.FacingAngle) * centerDistance,
-                origin.Y + MathF.Sin(sentry.FacingAngle) * centerDistance));
+                origin.X + MathF.Cos(renderFacing) * centerDistance,
+                origin.Y + MathF.Sin(renderFacing) * centerDistance));
             using var scanLine = new Pen(Color.FromArgb(
                 sentry.HasSight ? 82 : 54,
                 sentry.HasSight ? C.Red : C.Sick), 2);
@@ -58,22 +62,27 @@ internal sealed partial class GameForm
         if (firingFields.PointCount > 0) g.FillPath(firingExposure, firingFields);
     }
 
-    private List<float> BuildSentryVisionRayOffsets(PointF origin, float facingAngle)
+    private List<float> BuildSentryVisionRayOffsets(
+        PointF origin,
+        float facingAngle,
+        float viewDistance,
+        float fieldOfView,
+        bool ignoreWalls)
     {
         const int rayCount = 32;
         const float edgeEpsilon = .0015f;
-        var halfField = SentryRunFieldOfView / 2;
+        var halfField = fieldOfView / 2;
         var offsets = new List<float>(rayCount + 49);
         for (var index = 0; index <= rayCount; index++)
-            offsets.Add(-halfField + SentryRunFieldOfView * index / rayCount);
+            offsets.Add(-halfField + fieldOfView * index / rayCount);
 
-        if (_maze is not null)
+        if (_maze is not null && !ignoreWalls)
         {
-            var minGridX = Math.Max(0, (int)MathF.Floor(origin.X - SentryRunViewDistance + .5f));
-            var maxGridX = Math.Min(_maze.Width, (int)MathF.Ceiling(origin.X + SentryRunViewDistance + .5f));
-            var minGridY = Math.Max(0, (int)MathF.Floor(origin.Y - SentryRunViewDistance + .5f));
-            var maxGridY = Math.Min(_maze.Height, (int)MathF.Ceiling(origin.Y + SentryRunViewDistance + .5f));
-            var maximumSquared = (SentryRunViewDistance + .05f) * (SentryRunViewDistance + .05f);
+            var minGridX = Math.Max(0, (int)MathF.Floor(origin.X - viewDistance + .5f));
+            var maxGridX = Math.Min(_maze.Width, (int)MathF.Ceiling(origin.X + viewDistance + .5f));
+            var minGridY = Math.Max(0, (int)MathF.Floor(origin.Y - viewDistance + .5f));
+            var maxGridY = Math.Min(_maze.Height, (int)MathF.Ceiling(origin.Y + viewDistance + .5f));
+            var maximumSquared = (viewDistance + .05f) * (viewDistance + .05f);
             for (var gridX = minGridX; gridX <= maxGridX; gridX++)
             for (var gridY = minGridY; gridY <= maxGridY; gridY++)
             {
@@ -130,7 +139,9 @@ internal sealed partial class GameForm
     private void DrawSentryBody(Graphics g, Sentry sentry, PointF center, float radius, int alpha)
     {
         if (alpha <= 4 || radius <= 2) return;
-        var signalBase = sentry.HasSight ? C.Red : C.Sick;
+        var signalBase = sentry.Empowered
+            ? EnemyEmpowermentColor(sentry.AnimationPhase)
+            : sentry.HasSight ? C.Red : C.Sick;
         var signal = Color.FromArgb(alpha, signalBase);
         var dark = Color.FromArgb(alpha, 3, 7, 7);
         var ceramic = Color.FromArgb(alpha, C.Bone);
@@ -176,8 +187,9 @@ internal sealed partial class GameForm
         g.FillPolygon(voidBrush, SentryPolygon(center, 8, voidRadius, MathF.PI / 8));
 
         // The offset sight-bar is the readable facing indicator and muzzle.
-        var directionX = MathF.Cos(sentry.FacingAngle);
-        var directionY = MathF.Sin(sentry.FacingAngle);
+        var renderFacing = SentryRenderFacing(sentry);
+        var directionX = MathF.Cos(renderFacing);
+        var directionY = MathF.Sin(renderFacing);
         var tangentX = -directionY;
         var tangentY = directionX;
         var rear = radius * .12f;
@@ -259,8 +271,9 @@ internal sealed partial class GameForm
     {
         foreach (var projectile in _sentryProjectiles)
         {
-            if (IsPositionConcealed(projectile.Position)) continue;
-            var head = CellCenter(projectile.Position);
+            var renderPosition = EnemyProjectileRenderPosition(projectile);
+            if (IsPositionConcealed(renderPosition)) continue;
+            var head = CellCenter(renderPosition);
             var velocityLength = MathF.Sqrt(
                 projectile.Velocity.X * projectile.Velocity.X +
                 projectile.Velocity.Y * projectile.Velocity.Y);
@@ -276,7 +289,13 @@ internal sealed partial class GameForm
                 StartCap = LineCap.Square,
                 EndCap = LineCap.Square
             };
-            using var signal = new Pen(flicker ? C.Signal : C.Red, 4)
+            var projectileColor = projectile.Kind switch
+            {
+                EnemyProjectileKind.Triangle => flicker ? C.Red : C.Signal,
+                EnemyProjectileKind.Star => EnemyEmpowermentColor(projectile.Serial * .37f),
+                _ => flicker ? C.Signal : C.Red
+            };
+            using var signal = new Pen(projectileColor, 4)
             {
                 StartCap = LineCap.Square,
                 EndCap = LineCap.Square
@@ -286,11 +305,37 @@ internal sealed partial class GameForm
 
             var headRadius = Math.Max(4, _cellSize * .075f);
             using var headKey = new SolidBrush(C.Ink);
-            using var headSignal = new SolidBrush(flicker ? C.Bone : C.Signal);
-            var diamond = SentryPolygon(head, 4, headRadius, 0);
-            g.FillPolygon(headKey, diamond);
-            g.FillPolygon(headSignal, SentryInsetPolygon(diamond, .56f));
+            using var headSignal = new SolidBrush(
+                projectile.Kind == EnemyProjectileKind.Star
+                    ? projectileColor
+                    : flicker ? C.Bone : C.Signal);
+            var headShape = projectile.Kind switch
+            {
+                EnemyProjectileKind.Triangle => SentryPolygon(
+                    head, 3, headRadius * 1.18f,
+                    MathF.Atan2(directionY, directionX)),
+                EnemyProjectileKind.Star => ProjectileStarPoints(
+                    head, headRadius * 1.35f,
+                    _time * 2.4f + projectile.Serial),
+                _ => SentryPolygon(head, 4, headRadius, 0)
+            };
+            g.FillPolygon(headKey, headShape);
+            g.FillPolygon(headSignal, SentryInsetPolygon(headShape, .56f));
         }
+    }
+
+    private static PointF[] ProjectileStarPoints(PointF center, float radius, float rotation)
+    {
+        var points = new PointF[10];
+        for (var index = 0; index < points.Length; index++)
+        {
+            var pointRadius = index % 2 == 0 ? radius : radius * .43f;
+            var angle = rotation + index * MathF.PI / 5;
+            points[index] = new PointF(
+                center.X + MathF.Cos(angle) * pointRadius,
+                center.Y + MathF.Sin(angle) * pointRadius);
+        }
+        return points;
     }
 
     private static float SentryBurrowDepth(Sentry sentry)

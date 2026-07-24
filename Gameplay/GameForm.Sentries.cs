@@ -20,6 +20,12 @@ internal sealed partial class GameForm
     private float SentryRunFieldOfView => SentryFieldOfView *
         (1f + (RunAggressionScale - 1f) * .35f);
 
+    private float SentryViewDistanceFor(Sentry sentry) =>
+        SentryRunViewDistance * (sentry.Empowered ? 1.65f : 1f);
+
+    private float SentryFieldOfViewFor(Sentry sentry) =>
+        SentryRunFieldOfView * (sentry.Empowered ? 1.28f : 1f);
+
     private void SpawnSentries()
     {
         ResetSentries();
@@ -60,8 +66,8 @@ internal sealed partial class GameForm
         if (IsOnlineGameplayActive && !IsOnlineSimulationHost) return;
         if (_hitEffect > 0 && !IsOnlineGameplayActive)
         {
-            _sentryProjectiles.Clear();
             foreach (var sentry in _sentries) sentry.HasSight = false;
+            UpdateSentryProjectiles(deltaTime);
             return;
         }
 
@@ -71,7 +77,6 @@ internal sealed partial class GameForm
                 DistanceSquared(_visualCell, sentry.Cell) <= .24f))
         {
             BeginHollowHit(causedByHollow: false);
-            _sentryProjectiles.Clear();
             return;
         }
         CheckOnlineRemoteSentryContact();
@@ -123,10 +128,14 @@ internal sealed partial class GameForm
             sentry.FacingAngle + sentry.RotationDirection * SentryTurnSpeed *
             RunAggressionScale * deltaTime);
 
+        var previousTargetPlayerId = sentry.TargetPlayerId;
         var seesPlayer = CanSentrySeePlayer(sentry);
         if (seesPlayer)
         {
-            if (!sentry.HasSight) TriggerOnlineDetectionWarning(sentry.TargetPlayerId);
+            if (!sentry.HasSight ||
+                !string.Equals(previousTargetPlayerId, sentry.TargetPlayerId,
+                    StringComparison.Ordinal))
+                TriggerOnlineDetectionWarning(sentry.TargetPlayerId);
             sentry.HasSight = true;
             sentry.UnsuccessfulScanTime = 0;
             if (sentry.FireCooldown <= 0)
@@ -162,14 +171,17 @@ internal sealed partial class GameForm
         var dy = target.Y - origin.Y;
         var distanceSquared = dx * dx + dy * dy;
         if (distanceSquared <= .001f) return true;
-        if (distanceSquared > SentryRunViewDistance * SentryRunViewDistance) return false;
+        var viewDistance = SentryViewDistanceFor(sentry);
+        if (distanceSquared > viewDistance * viewDistance) return false;
 
         var targetAngle = MathF.Atan2(dy, dx);
-        if (Math.Abs(NormalizeAngle(targetAngle - sentry.FacingAngle)) > SentryRunFieldOfView / 2)
+        if (Math.Abs(NormalizeAngle(targetAngle - sentry.FacingAngle)) >
+            SentryFieldOfViewFor(sentry) / 2)
             return false;
 
         var distance = MathF.Sqrt(distanceSquared);
-        var clearDistance = RaycastVisionDistance(origin, targetAngle, distance, ignoreWalls: false);
+        var clearDistance = RaycastVisionDistance(
+            origin, targetAngle, distance, ignoreWalls: sentry.Empowered);
         return clearDistance >= distance - .06f;
     }
 
@@ -198,10 +210,14 @@ internal sealed partial class GameForm
             Velocity = new PointF(directionX * SentryProjectileSpeed * RunAggressionScale,
                 directionY * SentryProjectileSpeed * RunAggressionScale),
             Lifetime = .82f,
-            Serial = ++_sentryProjectileSerial
+            Serial = ++_sentryProjectileSerial,
+            Kind = EnemyProjectileKind.Sentry,
+            Damage = 1,
+            IgnoreWalls = sentry.Empowered,
+            DestroyWalls = sentry.Empowered
         });
         sentry.MuzzleFlash = .16f;
-        sentry.FireCooldown = 1.05f / RunAggressionScale;
+        sentry.FireCooldown = (sentry.Empowered ? .72f : 1.05f) / RunAggressionScale;
     }
 
     private void UpdateSentryProjectiles(float deltaTime)
@@ -222,17 +238,21 @@ internal sealed partial class GameForm
                 projectile.Velocity.Y * projectile.Velocity.Y);
             var travel = speed * deltaTime;
             var angle = MathF.Atan2(projectile.Velocity.Y, projectile.Velocity.X);
+            var nextPosition = new PointF(
+                projectile.PreviousPosition.X + projectile.Velocity.X * deltaTime,
+                projectile.PreviousPosition.Y + projectile.Velocity.Y * deltaTime);
+            if (projectile.DestroyWalls)
+                DestroyWallsAlongProjectilePath(projectile.PreviousPosition, nextPosition);
             var clearDistance = RaycastVisionDistance(
-                projectile.PreviousPosition, angle, travel + .015f, ignoreWalls: false);
-            if (clearDistance + .003f < travel)
+                projectile.PreviousPosition, angle, travel + .015f,
+                ignoreWalls: projectile.IgnoreWalls);
+            if (!projectile.IgnoreWalls && clearDistance + .003f < travel)
             {
                 _sentryProjectiles.RemoveAt(index);
                 continue;
             }
 
-            projectile.Position = new PointF(
-                projectile.PreviousPosition.X + projectile.Velocity.X * deltaTime,
-                projectile.PreviousPosition.Y + projectile.Velocity.Y * deltaTime);
+            projectile.Position = nextPosition;
 
             if (!InsideMaze(PositionCell(projectile.Position)))
             {
@@ -242,7 +262,7 @@ internal sealed partial class GameForm
 
             if (TryHitOnlinePlayerWithProjectile(projectile))
             {
-                _sentryProjectiles.Clear();
+                _sentryProjectiles.RemoveAt(index);
                 return;
             }
 
@@ -252,9 +272,43 @@ internal sealed partial class GameForm
                 projectile.PreviousPosition, projectile.Position);
             if (separationSquared > .075f) continue;
 
-            BeginHollowHit(causedByHollow: false);
-            _sentryProjectiles.Clear();
+            BeginHollowHit(projectile.Damage,
+                causedByHollow: projectile.Kind != EnemyProjectileKind.Sentry);
+            _sentryProjectiles.RemoveAt(index);
             return;
+        }
+    }
+
+    private void DestroyWallsAlongProjectilePath(PointF from, PointF to)
+    {
+        if (_maze is null) return;
+        var dx = to.X - from.X;
+        var dy = to.Y - from.Y;
+        var distance = MathF.Sqrt(dx * dx + dy * dy);
+        var steps = Math.Max(1, (int)MathF.Ceiling(distance / .08f));
+        var previousCell = PositionCell(from);
+        for (var index = 1; index <= steps; index++)
+        {
+            var progress = index / (float)steps;
+            var sample = new PointF(from.X + dx * progress, from.Y + dy * progress);
+            var cell = PositionCell(sample);
+            if (!InsideMaze(previousCell) || !InsideMaze(cell))
+            {
+                previousCell = cell;
+                continue;
+            }
+            while (previousCell.X != cell.X)
+            {
+                var direction = cell.X > previousCell.X ? Direction.Right : Direction.Left;
+                _maze.TryDestroyWall(previousCell, direction);
+                previousCell = _maze.Move(previousCell, direction);
+            }
+            while (previousCell.Y != cell.Y)
+            {
+                var direction = cell.Y > previousCell.Y ? Direction.Down : Direction.Up;
+                _maze.TryDestroyWall(previousCell, direction);
+                previousCell = _maze.Move(previousCell, direction);
+            }
         }
     }
 

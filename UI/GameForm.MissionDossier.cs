@@ -16,6 +16,8 @@ internal sealed partial class GameForm
         var elapsed = now - _startedAt;
         if (_missionDossierOpen && _missionDossierOpenedAt != default)
             elapsed -= now - _missionDossierOpenedAt;
+        if (OfflinePauseFreezesGame && _offlinePauseOpenedAt != default)
+            elapsed -= now - _offlinePauseOpenedAt;
         return elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed;
     }
 

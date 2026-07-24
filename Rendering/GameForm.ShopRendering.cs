@@ -9,9 +9,8 @@ internal sealed partial class GameForm
         if (_maze is null) return;
 
         // Storage dressing is deliberately split into a floor pass and a fixture
-        // pass. The first pass makes every object feel installed in the room; the
-        // clear center of each footprint also communicates that the dressing is
-        // scenery, not hidden collision.
+        // pass. Floor plates and old stains make each solid fixture's occupied
+        // tile visually legible before the body/occlusion pass is composited.
         foreach (var room in _maze.Rooms)
         {
             if (!_revealedRoomIds.Contains(room.Id)) continue;
@@ -59,8 +58,43 @@ internal sealed partial class GameForm
         float Rotation,
         Direction WallSide);
 
+    private readonly record struct RoomFixtureProfile(
+        float TangentScale,
+        float DepthScale,
+        float Shear,
+        int Presentation);
+
     private RoomFixturePose GetRoomPropPose(RoomProp prop) =>
         GetRoomFixturePose(prop.Cell, prop.WallSide);
+
+    private static RoomFixtureProfile GetRoomFixtureProfile(Direction wallSide) =>
+        wallSide switch
+        {
+            // North fixtures expose their complete working face.
+            Direction.Up => new RoomFixtureProfile(1f, 1f, 0f, 0),
+            // East/west fixtures use opposing narrow side elevations, not a
+            // quarter-turned copy of the north-facing silhouette.
+            Direction.Right => new RoomFixtureProfile(.76f, 1.04f, -.11f, 1),
+            // South fixtures show more rear hood and less face depth.
+            Direction.Down => new RoomFixtureProfile(.94f, .79f, 0f, 2),
+            Direction.Left => new RoomFixtureProfile(.76f, 1.04f, .11f, 3),
+            _ => new RoomFixtureProfile(1f, 1f, 0f, 0)
+        };
+
+    private static void ApplyRoomFixturePresentation(
+        Graphics g,
+        RoomFixturePose pose)
+    {
+        var profile = GetRoomFixtureProfile(pose.WallSide);
+        g.TranslateTransform(pose.Center.X, pose.Center.Y);
+        g.RotateTransform(pose.Rotation);
+        g.ScaleTransform(profile.TangentScale, profile.DepthScale);
+        if (Math.Abs(profile.Shear) > .001f)
+        {
+            using var shear = new Matrix(1, 0, profile.Shear, 1, 0, 0);
+            g.MultiplyTransform(shear);
+        }
+    }
 
     private RoomFixturePose GetRoomFixturePose(Point cell, Direction wallSide)
     {
@@ -125,8 +159,7 @@ internal sealed partial class GameForm
     {
         var pose = GetRoomPropPose(prop);
         var state = g.Save();
-        g.TranslateTransform(pose.Center.X, pose.Center.Y);
-        g.RotateTransform(pose.Rotation);
+        ApplyRoomFixturePresentation(g, pose);
 
         using var oldStain = new SolidBrush(Color.FromArgb(54, 10, 15, 14));
         using var footprint = new SolidBrush(Color.FromArgb(100, 21, 28, 25));
@@ -181,8 +214,8 @@ internal sealed partial class GameForm
     {
         var pose = GetRoomPropPose(prop);
         var state = g.Save();
-        g.TranslateTransform(pose.Center.X, pose.Center.Y);
-        g.RotateTransform(pose.Rotation);
+        ApplyRoomFixturePresentation(g, pose);
+        DrawRoomFixtureRearProfile(g, prop.Kind, pose.WallSide, prop.Variant);
         switch (prop.Kind)
         {
             case RoomPropKind.CargoStack:
@@ -204,7 +237,208 @@ internal sealed partial class GameForm
                 DrawWorkLightProp(g, prop);
                 break;
         }
+        DrawRoomFixtureFacingProfile(g, prop, pose.WallSide);
         g.Restore(state);
+    }
+
+    private static void DrawRoomFixtureRearProfile(
+        Graphics g,
+        RoomPropKind kind,
+        Direction wallSide,
+        int variant)
+    {
+        using var recess = new SolidBrush(Color.FromArgb(226, 8, 12, 11));
+        using var mount = new SolidBrush(Color.FromArgb(62, 72, 62));
+        using var mountEdge = new SolidBrush(Color.FromArgb(119, 112, 84));
+        using var bolt = new SolidBrush(Color.FromArgb(137, 132, 101));
+        using var loom = new Pen(Color.FromArgb(90, 98, 78), 3)
+        {
+            StartCap = LineCap.Square,
+            EndCap = LineCap.Square
+        };
+
+        // These are deliberately four authored elevations. Rotation establishes
+        // the wall normal, while the profiles decide which casing plane, mount,
+        // and service loom the overhead camera can actually see.
+        switch (wallSide)
+        {
+            case Direction.Up:
+                g.FillRectangle(recess, -35, -39, 70, 13);
+                g.FillRectangle(mount, -32, -36, 64, 8);
+                g.FillRectangle(mountEdge, -26, -28, 52, 4);
+                g.FillRectangle(bolt, -27, -34, 5, 4);
+                g.FillRectangle(bolt, 22, -34, 5, 4);
+                g.DrawLine(loom, -19, -30, -19, -23);
+                break;
+            case Direction.Down:
+                g.FillPolygon(recess,
+                [
+                    new PointF(-36, -42), new PointF(36, -42),
+                    new PointF(42, -25), new PointF(31, -16),
+                    new PointF(-31, -16), new PointF(-42, -25)
+                ]);
+                g.FillPolygon(mount,
+                [
+                    new PointF(-32, -38), new PointF(32, -38),
+                    new PointF(36, -27), new PointF(27, -20),
+                    new PointF(-27, -20), new PointF(-36, -27)
+                ]);
+                for (var x = -22; x <= 18; x += 10)
+                    g.FillRectangle(mountEdge, x, -34, 6, 3);
+                g.DrawLine(loom, 24, -28, 34, -18);
+                break;
+            case Direction.Right:
+                g.FillPolygon(recess,
+                [
+                    new PointF(-45, -36), new PointF(25, -36),
+                    new PointF(33, -25), new PointF(22, 30),
+                    new PointF(-39, 32), new PointF(-48, 19)
+                ]);
+                g.FillPolygon(mount,
+                [
+                    new PointF(-41, -33), new PointF(19, -33),
+                    new PointF(25, -25), new PointF(18, 26),
+                    new PointF(-35, 28), new PointF(-43, 18)
+                ]);
+                g.FillRectangle(mountEdge, -39, -26, 7, 46);
+                g.FillRectangle(bolt, -37, -21, 4, 5);
+                g.FillRectangle(bolt, -37, 14, 4, 5);
+                g.DrawLine(loom, -31, 3, -21, 17);
+                break;
+            default:
+                g.FillPolygon(recess,
+                [
+                    new PointF(-25, -36), new PointF(45, -36),
+                    new PointF(48, 19), new PointF(39, 32),
+                    new PointF(-22, 30), new PointF(-33, -25)
+                ]);
+                g.FillPolygon(mount,
+                [
+                    new PointF(-19, -33), new PointF(41, -33),
+                    new PointF(43, 18), new PointF(35, 28),
+                    new PointF(-18, 26), new PointF(-25, -25)
+                ]);
+                g.FillRectangle(mountEdge, 32, -26, 7, 46);
+                g.FillRectangle(bolt, 33, -21, 4, 5);
+                g.FillRectangle(bolt, 33, 14, 4, 5);
+                g.DrawLine(loom, 31, 3, 21, 17);
+                break;
+        }
+
+        if (kind is RoomPropKind.PipeManifold or RoomPropKind.PressureTank)
+        {
+            var serviceSide = wallSide == Direction.Left ? -1 : 1;
+            g.DrawLine(loom, serviceSide * 21, -28, serviceSide * 30, -38);
+            g.FillRectangle(mountEdge, serviceSide * 30 - 3, -41, 7, 8);
+        }
+        else if (kind == RoomPropKind.WorkLight)
+        {
+            var offset = (variant & 1) == 0 ? -9 : 9;
+            g.DrawLine(loom, offset, -31, offset, -45);
+        }
+    }
+
+    private void DrawRoomFixtureFacingProfile(
+        Graphics g,
+        RoomProp prop,
+        Direction wallSide)
+    {
+        using var casing = new SolidBrush(Color.FromArgb(58, 66, 57));
+        using var casingDark = new SolidBrush(Color.FromArgb(26, 33, 30));
+        using var edge = new SolidBrush(Color.FromArgb(128, 122, 92));
+        using var signal = new SolidBrush(
+            RoomPropFrame(prop, 4.4f, 11) == 0 ? C.Signal : Color.FromArgb(127, 82, 48));
+        using var oxide = new SolidBrush(Color.FromArgb(130, 58, 43));
+        using var glassSide = new SolidBrush(Color.FromArgb(98, 141, 151, 119));
+
+        switch (wallSide)
+        {
+            case Direction.Up:
+                // Full front elevation: feet, service rail, and status lamps.
+                g.FillPolygon(casing,
+                [
+                    new PointF(-29, 21), new PointF(29, 21),
+                    new PointF(24, 29), new PointF(-24, 29)
+                ]);
+                g.FillRectangle(edge, -27, 21, 54, 4);
+                g.FillRectangle(signal, -17, 25, 8, 3);
+                g.FillRectangle(casingDark, 3, 25, 14, 3);
+                break;
+            case Direction.Down:
+                // Rear elevation: a deep hood occludes the upper controls and a
+                // maintenance strip replaces the front-facing status cluster.
+                g.FillPolygon(casingDark,
+                [
+                    new PointF(-31, -34), new PointF(31, -34),
+                    new PointF(36, -24), new PointF(25, -15),
+                    new PointF(-25, -15), new PointF(-36, -24)
+                ]);
+                g.FillRectangle(casing, -29, -31, 58, 10);
+                for (var x = -21; x <= 15; x += 12)
+                    g.FillRectangle(edge, x, -28, 7, 3);
+                g.FillRectangle(oxide, -24, 22, 48, 4);
+                g.FillRectangle(casingDark, -18, 23, 7, 2);
+                g.FillRectangle(casingDark, 1, 23, 7, 2);
+                break;
+            case Direction.Right:
+                // East-wall elevation exposes the left cheek and hides the far
+                // controls behind a projecting side shell.
+                g.FillPolygon(casing,
+                [
+                    new PointF(-38, -24), new PointF(-19, -29),
+                    new PointF(-15, 24), new PointF(-33, 30),
+                    new PointF(-41, 18)
+                ]);
+                g.FillRectangle(edge, -36, -19, 5, 40);
+                g.FillRectangle(signal, -30, 10, 8, 4);
+                g.FillRectangle(casingDark, 20, -19, 8, 39);
+                break;
+            default:
+                // West-wall elevation is separately authored and exposes the
+                // opposite cheek, including mirrored service lights.
+                g.FillPolygon(casing,
+                [
+                    new PointF(38, -24), new PointF(19, -29),
+                    new PointF(15, 24), new PointF(33, 30),
+                    new PointF(41, 18)
+                ]);
+                g.FillRectangle(edge, 31, -19, 5, 40);
+                g.FillRectangle(signal, 22, 10, 8, 4);
+                g.FillRectangle(casingDark, -28, -19, 8, 39);
+                break;
+        }
+
+        // Kind-specific facing hardware prevents the six fixtures from reading
+        // as one generic cabinet with different paint.
+        var visibleSide = wallSide == Direction.Right ? -1 :
+            wallSide == Direction.Left ? 1 : (prop.Variant & 1) == 0 ? -1 : 1;
+        switch (prop.Kind)
+        {
+            case RoomPropKind.CargoStack:
+                g.FillRectangle(edge, visibleSide * 17 - 4, -7, 8, 17);
+                g.FillRectangle(oxide, visibleSide * 17 - 2, -3, 4, 5);
+                break;
+            case RoomPropKind.PipeManifold:
+                g.FillRectangle(casingDark, visibleSide * 25 - 4, -13, 8, 29);
+                g.FillRectangle(edge, visibleSide * 30 - 5, -4, 10, 8);
+                break;
+            case RoomPropKind.SpecimenCabinet:
+                g.FillRectangle(glassSide, visibleSide * 20 - 3, -13, 6, 26);
+                g.FillRectangle(signal, visibleSide * 20 - 2, 15, 4, 4);
+                break;
+            case RoomPropKind.PressureTank:
+                g.FillRectangle(edge, visibleSide * 20 - 3, -17, 6, 34);
+                g.FillRectangle(oxide, visibleSide * 24 - 3, -5, 7, 9);
+                break;
+            case RoomPropKind.CableReel:
+                g.FillPolygon(edge, PixelOctagon(new PointF(visibleSide * 22, 0), 7, 10));
+                g.FillRectangle(casingDark, visibleSide * 22 - 2, -7, 4, 14);
+                break;
+            case RoomPropKind.WorkLight:
+                g.FillRectangle(casingDark, visibleSide * 18 - 4, -30, 8, 12);
+                g.FillRectangle(signal, visibleSide * 18 - 2, -27, 4, 5);
+                break;
+        }
     }
 
     private void DrawCargoStackProp(Graphics g, RoomProp prop)
@@ -355,7 +589,10 @@ internal sealed partial class GameForm
         g.FillRectangle(fog, 7, 12, 10, 3);
         g.FillRectangle(edge, -22, 20, 44, 6);
         g.FillRectangle(lamp, 15, 22, 4, 3);
-        LabFont.Draw(g, $"{prop.RoomId % 10}", -16, 22, 1, C.Ink, LabTextAlign.Center, 0);
+        using var cabinetInk = new SolidBrush(C.Ink);
+        var roomMark = prop.RoomId % 4;
+        for (var mark = 0; mark <= roomMark; mark++)
+            g.FillRectangle(cabinetInk, -18 + mark * 4, 22, 2, 2);
     }
 
     private void DrawPressureTankProp(Graphics g, RoomProp prop)
@@ -389,8 +626,8 @@ internal sealed partial class GameForm
         var dripY = -21 + dripFrame * 6;
         g.FillRectangle(wet, -13, dripY, 3, 6);
         if (dripFrame > 5) g.FillRectangle(wet, 9, -7 + (dripFrame - 5) * 5, 2, 4);
-        LabFont.Draw(g, prop.Variant % 2 == 0 ? "P" : "O2", 0, 28, 1, C.Ink,
-            LabTextAlign.Center, 0);
+        g.FillRectangle(ink, -7, 27, 14, 3);
+        g.FillRectangle(shellDark, prop.Variant % 2 == 0 ? -5 : 1, 27, 4, 3);
     }
 
     private void DrawCableReelProp(Graphics g, RoomProp prop)
@@ -512,35 +749,32 @@ internal sealed partial class GameForm
     private void DrawShopKioskFloor(Graphics g, ShopKiosk kiosk)
     {
         var pose = GetRoomFixturePose(kiosk.Cell, kiosk.WallSide);
-        var p = pose.Center;
         var pulse = PositiveHash((int)MathF.Floor(_time * 5) + kiosk.RoomId) % 8;
         using var aura = new SolidBrush(Color.FromArgb(pulse < 2 ? 41 : 27, C.Signal));
         using var pad = new SolidBrush(Color.FromArgb(128, 24, 31, 27));
         using var safeLine = new SolidBrush(Color.FromArgb(93, C.Signal));
         using var deadLine = new SolidBrush(Color.FromArgb(78, C.Steel));
         var state = g.Save();
-        g.TranslateTransform(p.X, p.Y);
-        g.RotateTransform(pose.Rotation);
-        g.TranslateTransform(-p.X, -p.Y);
+        ApplyRoomFixturePresentation(g, pose);
         g.FillPolygon(aura,
         [
-            new PointF(p.X - 47, p.Y - 29), new PointF(p.X + 47, p.Y - 29),
-            new PointF(p.X + 59, p.Y + 6), new PointF(p.X + 40, p.Y + 38),
-            new PointF(p.X - 40, p.Y + 38), new PointF(p.X - 59, p.Y + 6)
+            new PointF(-47, -29), new PointF(47, -29),
+            new PointF(59, 6), new PointF(40, 38),
+            new PointF(-40, 38), new PointF(-59, 6)
         ]);
         g.FillPolygon(pad,
         [
-            new PointF(p.X - 39, p.Y - 22), new PointF(p.X + 39, p.Y - 22),
-            new PointF(p.X + 48, p.Y + 8), new PointF(p.X + 32, p.Y + 29),
-            new PointF(p.X - 32, p.Y + 29), new PointF(p.X - 48, p.Y + 8)
+            new PointF(-39, -22), new PointF(39, -22),
+            new PointF(48, 8), new PointF(32, 29),
+            new PointF(-32, 29), new PointF(-48, 8)
         ]);
         for (var x = -34; x <= 28; x += 14)
         {
             g.FillRectangle((x / 14 + pulse) % 3 == 0 ? safeLine : deadLine,
-                p.X + x, p.Y + 24, 8, 3);
+                x, 24, 8, 3);
         }
-        g.FillRectangle(safeLine, p.X - 46, p.Y - 4, 5, 14);
-        g.FillRectangle(safeLine, p.X + 41, p.Y - 4, 5, 14);
+        g.FillRectangle(safeLine, -46, -4, 5, 14);
+        g.FillRectangle(safeLine, 41, -4, 5, 14);
         g.Restore(state);
     }
 
@@ -570,40 +804,39 @@ internal sealed partial class GameForm
         };
 
         var state = g.Save();
-        g.TranslateTransform(p.X, p.Y);
-        g.RotateTransform(pose.Rotation);
-        g.TranslateTransform(-p.X, -p.Y);
+        ApplyRoomFixturePresentation(g, pose);
+        DrawShopKioskRearProfile(g, kiosk.WallSide);
 
-        // A freestanding gantry holds the same unknowable silhouette seen in the
-        // full shop window. It hangs above the traversable tile so the drone can
-        // pass underneath without the prop reading as a solid obstacle.
+        // The counter is installed machinery and now owns this tile. Its open
+        // apron remains the adjacent safe interaction position.
         g.FillPolygon(gantryShadow,
         [
-            new PointF(p.X - 39, p.Y - 39), new PointF(p.X + 34, p.Y - 39),
-            new PointF(p.X + 43, p.Y + 20), new PointF(p.X + 35, p.Y + 29),
-            new PointF(p.X - 39, p.Y + 29), new PointF(p.X - 47, p.Y + 20)
+            new PointF(-39, -39), new PointF(34, -39),
+            new PointF(43, 20), new PointF(35, 29),
+            new PointF(-39, 29), new PointF(-47, 20)
         ]);
-        g.FillRectangle(gantry, p.X - 37, p.Y - 38, 74, 8);
-        g.FillRectangle(gantry, p.X - 39, p.Y - 34, 7, 51);
-        g.FillRectangle(gantry, p.X + 32, p.Y - 34, 7, 51);
-        g.DrawLine(cable, p.X - 20, p.Y - 30, p.X - 17, p.Y - 20 + bodyFrame);
-        g.DrawLine(cable, p.X + 17, p.Y - 30, p.X + 19, p.Y - 18 - bodyFrame / 2f);
+        g.FillRectangle(gantry, -37, -38, 74, 8);
+        g.FillRectangle(gantry, -39, -34, 7, 51);
+        g.FillRectangle(gantry, 32, -34, 7, 51);
+        g.DrawLine(cable, -20, -30, -17, -20 + bodyFrame);
+        g.DrawLine(cable, 17, -30, 19, -18 - bodyFrame / 2f);
 
-        var bodyCenter = new PointF(p.X, p.Y - 1);
+        var bodyCenter = new PointF(0, -1);
         DrawShopkeeperShroud(g, bodyCenter, .52f, bodyFrame);
         DrawShopkeeperEyes(g, new PointF(bodyCenter.X, bodyCenter.Y - 28 * .52f),
             .52f, lookX, lookY, kiosk.RoomId, 0);
 
         g.FillPolygon(gantry,
         [
-            new PointF(p.X - 43, p.Y + 11), new PointF(p.X + 43, p.Y + 11),
-            new PointF(p.X + 37, p.Y + 27), new PointF(p.X - 37, p.Y + 27)
+            new PointF(-43, 11), new PointF(43, 11),
+            new PointF(37, 27), new PointF(-37, 27)
         ]);
-        g.FillRectangle(edge, p.X - 43, p.Y + 11, 86, 5);
-        g.FillRectangle(signal, p.X - 32, p.Y + 19, 11, 4);
-        g.FillRectangle(signal, p.X + 24, p.Y + 19, 8, 4);
+        g.FillRectangle(edge, -43, 11, 86, 5);
+        g.FillRectangle(signal, -32, 19, 11, 4);
+        g.FillRectangle(signal, 24, 19, 8, 4);
         for (var x = -14; x <= 14; x += 7)
-            g.FillRectangle(gantryShadow, p.X + x, p.Y + 18, 3, 5);
+            g.FillRectangle(gantryShadow, x, 18, 3, 5);
+        DrawShopKioskFacingProfile(g, kiosk.WallSide, bodyFrame);
         g.Restore(state);
 
         var near = IsShopKioskInRange(_playerCell);
@@ -615,6 +848,107 @@ internal sealed partial class GameForm
             LabFont.Draw(g, near ? "E / TRADE" : "SAFE TRADE",
                 labelCenter.X, labelCenter.Y, 1,
                 near ? C.Signal : C.Sick, LabTextAlign.Center, 0);
+    }
+
+    private static void DrawShopKioskRearProfile(Graphics g, Direction wallSide)
+    {
+        using var voidBrush = new SolidBrush(Color.FromArgb(238, 5, 8, 8));
+        using var shell = new SolidBrush(Color.FromArgb(47, 57, 49));
+        using var rib = new SolidBrush(Color.FromArgb(108, 102, 78));
+        switch (wallSide)
+        {
+            case Direction.Up:
+                g.FillRectangle(voidBrush, -48, -46, 96, 15);
+                g.FillRectangle(shell, -43, -43, 86, 9);
+                g.FillRectangle(rib, -35, -35, 70, 4);
+                break;
+            case Direction.Down:
+                g.FillPolygon(voidBrush,
+                [
+                    new PointF(-51, -48), new PointF(51, -48),
+                    new PointF(58, -29), new PointF(43, -18),
+                    new PointF(-43, -18), new PointF(-58, -29)
+                ]);
+                g.FillRectangle(shell, -46, -44, 92, 15);
+                for (var x = -36; x <= 28; x += 16)
+                    g.FillRectangle(rib, x, -40, 9, 4);
+                break;
+            case Direction.Right:
+                g.FillPolygon(voidBrush,
+                [
+                    new PointF(-56, -45), new PointF(40, -45),
+                    new PointF(48, -31), new PointF(39, 35),
+                    new PointF(-50, 37), new PointF(-60, 22)
+                ]);
+                g.FillRectangle(shell, -52, -40, 10, 68);
+                g.FillRectangle(rib, -47, -31, 4, 51);
+                break;
+            default:
+                g.FillPolygon(voidBrush,
+                [
+                    new PointF(-40, -45), new PointF(56, -45),
+                    new PointF(60, 22), new PointF(50, 37),
+                    new PointF(-39, 35), new PointF(-48, -31)
+                ]);
+                g.FillRectangle(shell, 42, -40, 10, 68);
+                g.FillRectangle(rib, 43, -31, 4, 51);
+                break;
+        }
+    }
+
+    private static void DrawShopKioskFacingProfile(
+        Graphics g,
+        Direction wallSide,
+        int bodyFrame)
+    {
+        using var shell = new SolidBrush(Color.FromArgb(49, 59, 51));
+        using var dark = new SolidBrush(Color.FromArgb(8, 13, 12));
+        using var edge = new SolidBrush(Color.FromArgb(128, 124, 94));
+        using var light = new SolidBrush(bodyFrame == 0 ? C.Signal : Color.FromArgb(115, 82, 52));
+        switch (wallSide)
+        {
+            case Direction.Up:
+                g.FillRectangle(shell, -47, 25, 94, 8);
+                g.FillRectangle(edge, -39, 29, 78, 4);
+                g.FillRectangle(light, -4, 28, 8, 4);
+                break;
+            case Direction.Down:
+                // South installation exposes the rear canopy and ventilation
+                // spine instead of simply showing an upside-down counter face.
+                g.FillPolygon(dark,
+                [
+                    new PointF(-45, -38), new PointF(45, -38),
+                    new PointF(51, -25), new PointF(36, -14),
+                    new PointF(-36, -14), new PointF(-51, -25)
+                ]);
+                g.FillRectangle(shell, -41, -34, 82, 12);
+                for (var x = -31; x <= 25; x += 14)
+                    g.FillRectangle(edge, x, -30, 8, 3);
+                g.FillRectangle(light, -32, 24, 64, 4);
+                break;
+            case Direction.Right:
+                g.FillPolygon(shell,
+                [
+                    new PointF(-48, -31), new PointF(-28, -37),
+                    new PointF(-23, 27), new PointF(-41, 34),
+                    new PointF(-51, 18)
+                ]);
+                g.FillRectangle(edge, -44, -23, 5, 47);
+                g.FillRectangle(light, -36, 14, 8, 5);
+                g.FillRectangle(dark, 32, -24, 10, 47);
+                break;
+            default:
+                g.FillPolygon(shell,
+                [
+                    new PointF(48, -31), new PointF(28, -37),
+                    new PointF(23, 27), new PointF(41, 34),
+                    new PointF(51, 18)
+                ]);
+                g.FillRectangle(edge, 39, -23, 5, 47);
+                g.FillRectangle(light, 28, 14, 8, 5);
+                g.FillRectangle(dark, -42, -24, 10, 47);
+                break;
+        }
     }
 
     private void DrawShopConsole(Graphics g)

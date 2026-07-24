@@ -5,16 +5,20 @@ internal sealed partial class GameForm
     private static readonly string[] RunMapSizeNames = ["SMALL", "MEDIUM", "LARGE"];
     private static readonly string[] RunStrictnessNames = ["STRICT", "NORMAL", "LOOSE"];
     private static readonly string[] RunHollowAmountNames = ["NONE", "SMALL", "NORMAL", "LARGE"];
-    private static readonly string[] RunHollowTypeNames = ["SQUARE", "DIAMOND", "HEX", "SENTRY"];
+    private static readonly string[] RunHollowTypeNames =
+        ["SQUARE", "DIAMOND", "HEX", "SENTRY", "TRIANGLE", "CAMERA", "STAR"];
     private static readonly RunHollowTypes[] RunHollowTypeFlags =
     [
         RunHollowTypes.Square,
         RunHollowTypes.Diamond,
         RunHollowTypes.Hex,
-        RunHollowTypes.Sentry
+        RunHollowTypes.Sentry,
+        RunHollowTypes.Triangle,
+        RunHollowTypes.Camera,
+        RunHollowTypes.Star
     ];
 
-    private readonly RectangleF[] _runSettingRows = new RectangleF[8];
+    private readonly RectangleF[] _runSettingRows = new RectangleF[11];
     private readonly RectangleF[] _runSettingDecreaseButtons = new RectangleF[3];
     private readonly RectangleF[] _runSettingIncreaseButtons = new RectangleF[3];
     private RectangleF _runStartButton;
@@ -38,12 +42,12 @@ internal sealed partial class GameForm
         }
         else if (e.KeyCode is Keys.W or Keys.Up || e.Shift && e.KeyCode == Keys.Tab)
         {
-            _runSettingsSelection = Wrap(_runSettingsSelection - 1, 10);
+            _runSettingsSelection = Wrap(_runSettingsSelection - 1, 13);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode is Keys.S or Keys.Down or Keys.Tab)
         {
-            _runSettingsSelection = Wrap(_runSettingsSelection + 1, 10);
+            _runSettingsSelection = Wrap(_runSettingsSelection + 1, 13);
             _audio.Play(AudioCue.Select);
         }
         else if (e.KeyCode is Keys.A or Keys.Left)
@@ -75,17 +79,17 @@ internal sealed partial class GameForm
             case 2:
                 _runSettings.HollowAmount = (RunHollowAmount)Wrap((int)_runSettings.HollowAmount + direction, 4);
                 break;
-            case >= 3 and <= 6:
+            case >= 3 and <= 9:
                 SetRunHollowType(RunHollowTypeFlags[_runSettingsSelection - 3], direction > 0);
                 break;
-            case 7:
+            case 10:
                 _runSettings.DifficultyScaling = direction > 0;
                 break;
-            case 8:
-                if (direction < 0) _runSettingsSelection = 9;
+            case 11:
+                if (direction < 0) _runSettingsSelection = 12;
                 break;
-            case 9:
-                if (direction > 0) _runSettingsSelection = 8;
+            case 12:
+                if (direction > 0) _runSettingsSelection = 11;
                 break;
         }
         _audio.Play(AudioCue.Select);
@@ -105,16 +109,16 @@ internal sealed partial class GameForm
             case 2:
                 _runSettings.HollowAmount = (RunHollowAmount)Wrap((int)_runSettings.HollowAmount + 1, 4);
                 break;
-            case >= 3 and <= 6:
+            case >= 3 and <= 9:
                 ToggleRunHollowType(RunHollowTypeFlags[_runSettingsSelection - 3]);
                 break;
-            case 7:
+            case 10:
                 _runSettings.DifficultyScaling = !_runSettings.DifficultyScaling;
                 break;
-            case 8:
+            case 11:
                 StartConfiguredRun();
                 break;
-            case 9:
+            case 12:
                 EnterTitle();
                 break;
         }
@@ -167,15 +171,15 @@ internal sealed partial class GameForm
 
         var scalingRect = new RectangleF(parameterBay.X + 22, parameterBay.Y + 378,
             parameterBay.Width - 44, 78);
-        _runSettingRows[7] = scalingRect;
+        _runSettingRows[10] = scalingRect;
         DrawRunToggleRow(g, scalingRect, "DIFFICULTY SCALING", _runSettings.DifficultyScaling,
-            _runSettingsSelection == 7, _hoverRunSetting == 7);
+            _runSettingsSelection == 10, _hoverRunSetting == 10);
 
         for (var index = 0; index < RunHollowTypeFlags.Length; index++)
         {
             var rowIndex = index + 3;
-            var rect = new RectangleF(rosterBay.X + 22, rosterBay.Y + 66 + index * 82,
-                rosterBay.Width - 44, 66);
+            var rect = new RectangleF(rosterBay.X + 22, rosterBay.Y + 60 + index * 49,
+                rosterBay.Width - 44, 40);
             _runSettingRows[rowIndex] = rect;
             DrawRunToggleRow(g, rect, RunHollowTypeNames[index],
                 _runSettings.HollowTypes.HasFlag(RunHollowTypeFlags[index]),
@@ -197,11 +201,11 @@ internal sealed partial class GameForm
 
         _backButton = new RectangleF(72, 650, 236, 62);
         _runStartButton = new RectangleF(866, 650, 322, 62);
-        DrawAbortButton(g, _backButton, "BACK", _hoverBack || _runSettingsSelection == 9);
-        DrawLatchButton(g, _runStartButton, "BEGIN RUN", _hoverRunStart || _runSettingsSelection == 8,
+        DrawAbortButton(g, _backButton, "BACK", _hoverBack || _runSettingsSelection == 12);
+        DrawLatchButton(g, _runStartButton, "BEGIN RUN", _hoverRunStart || _runSettingsSelection == 11,
             showState: false);
-        if (_runSettingsSelection == 8) DrawKeyboardFocusMarker(g, _runStartButton);
-        if (_runSettingsSelection == 9) DrawKeyboardFocusMarker(g, _backButton);
+        if (_runSettingsSelection == 11) DrawKeyboardFocusMarker(g, _runStartButton);
+        if (_runSettingsSelection == 12) DrawKeyboardFocusMarker(g, _backButton);
     }
 
     private void DrawRunScalarRow(Graphics g, RectangleF rect, int index, string label, string value)
@@ -236,7 +240,10 @@ internal sealed partial class GameForm
             active ? C.Signal : C.Steel, 9, focused ? 4 : 2);
         LabFont.Draw(g, label, rect.X + 22, rect.Y + rect.Height / 2 - 7, 1,
             active ? C.Bone : C.Sick);
-        var switchRect = new RectangleF(rect.Right - 130, rect.Y + 15, 103, rect.Height - 30);
+        var switchPadding = rect.Height < 55 ? 8 : 15;
+        var switchRect = new RectangleF(
+            rect.Right - 130, rect.Y + switchPadding, 103,
+            rect.Height - switchPadding * 2);
         using var switchFill = new SolidBrush(enabled ? Color.FromArgb(67, 67, 45) : Color.FromArgb(4, 10, 10));
         using var switchEdge = new Pen(active ? C.Signal : C.Steel, 2);
         g.FillRectangle(switchFill, switchRect);

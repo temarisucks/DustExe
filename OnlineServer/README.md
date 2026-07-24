@@ -257,13 +257,17 @@ Run settings:
   "mapSize": "medium",
   "mazeStrictness": "normal",
   "hollowAmount": "normal",
-  "hollowTypes": ["square", "diamond", "hex", "sentry"],
+  "hollowTypes": [
+    "square", "diamond", "hex", "sentry", "triangle", "camera", "star"
+  ],
   "difficultyScaling": true
 }
 ```
 
 Accepted sizes are `small`, `medium`, and `large`; strictness is `strict`,
-`normal`, or `loose`; amount is `none`, `small`, `normal`, or `large`.
+`normal`, or `loose`; amount is `none`, `small`, `normal`, or `large`; and the
+accepted enemy sockets are `square`, `diamond`, `hex`, `sentry`, `triangle`,
+`camera`, and `star`.
 
 Every `lobby.state` includes:
 

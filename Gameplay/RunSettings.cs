@@ -30,7 +30,10 @@ internal enum RunHollowTypes
     Diamond = 1 << 1,
     Hex = 1 << 2,
     Sentry = 1 << 3,
-    All = Square | Diamond | Hex | Sentry
+    Triangle = 1 << 4,
+    Camera = 1 << 5,
+    Star = 1 << 6,
+    All = Square | Diamond | Hex | Sentry | Triangle | Camera | Star
 }
 
 /// <summary>
@@ -71,7 +74,14 @@ internal sealed class RunSettingsState
     }
 }
 
-internal readonly record struct EnemyRoster(int Squares, int Diamonds, int Hexes, int Sentries)
+internal readonly record struct EnemyRoster(
+    int Squares,
+    int Diamonds,
+    int Hexes,
+    int Sentries,
+    int Triangles,
+    int Cameras,
+    int Stars)
 {
-    public int Total => Squares + Diamonds + Hexes + Sentries;
+    public int Total => Squares + Diamonds + Hexes + Sentries + Triangles + Cameras + Stars;
 }
