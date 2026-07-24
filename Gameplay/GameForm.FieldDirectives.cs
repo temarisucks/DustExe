@@ -72,7 +72,8 @@ internal sealed partial class GameForm
                                    Manhattan(cell, room.DoorCell) > 1 &&
                                    IsRoomPerimeterCell(room, cell) &&
                                    !occupied.Contains(cell))
-                    .OrderBy(_ => _random.Next())
+                    .OrderByDescending(cell => RoomWallSides(room, cell).Count == 1)
+                    .ThenBy(_ => _random.Next())
                     .ToList();
                 var interior = room.Cells
                     .Where(cell => cell != room.DoorCell &&
@@ -123,6 +124,10 @@ internal sealed partial class GameForm
                     Number = nodeIndex + 1,
                     RoomId = roomId,
                     Cell = cell,
+                    WallSide = SelectRoomWallSide(
+                        _maze.Rooms.First(room => room.Id == roomId),
+                        cell,
+                        globalTask * 31 + nodeIndex * 7 + ownerSlot),
                     Phase = (float)_random.NextDouble() * MathF.PI * 2
                 });
             }
@@ -175,8 +180,11 @@ internal sealed partial class GameForm
             if (!roomCandidates.TryGetValue(room.Id, out var candidates) ||
                 candidates.Count == 0)
                 continue;
-            cell = candidates[^1];
-            candidates.RemoveAt(candidates.Count - 1);
+            // Candidate lists are tiered: sealed perimeter first, then interior,
+            // then near-door reserve cells. Consume from the front so fixtures
+            // use a real wall whenever the room has one available.
+            cell = candidates[0];
+            candidates.RemoveAt(0);
             roomId = room.Id;
             return true;
         }

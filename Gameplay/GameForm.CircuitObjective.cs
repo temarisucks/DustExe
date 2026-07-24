@@ -35,6 +35,8 @@ internal sealed partial class GameForm
                 Number = _circuitSwitches.Count + 1,
                 RoomId = room.Id,
                 Cell = cell,
+                WallSide = SelectRoomWallSide(
+                    room, cell, _circuitSwitches.Count + room.Id * 17),
                 Phase = (float)_random.NextDouble() * MathF.PI * 2
             });
             occupied.Add(cell);

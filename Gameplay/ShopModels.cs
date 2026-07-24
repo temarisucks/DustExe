@@ -14,6 +14,8 @@ internal sealed class RoomProp
 {
     public required int RoomId { get; init; }
     public required Point Cell { get; init; }
+    /// <summary>Direction from Cell toward the sealed chamber wall.</summary>
+    public required Direction WallSide { get; init; }
     public required RoomPropKind Kind { get; init; }
     public required int Variant { get; init; }
 }
@@ -40,6 +42,8 @@ internal sealed class ShopKiosk
 {
     public required int RoomId { get; init; }
     public required Point Cell { get; init; }
+    /// <summary>Direction from Cell toward the sealed chamber wall.</summary>
+    public required Direction WallSide { get; init; }
 }
 
 internal enum ShopItemKind

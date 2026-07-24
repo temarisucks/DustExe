@@ -154,7 +154,9 @@ internal sealed partial class GameForm
         {
             if (item.Carried || item.CarrierPlayerId is not null ||
                 item.Delivered || IsCellConcealed(item.Cell)) continue;
-            DrawCargoCrate(g, CellCenter(item.Cell), item, 1f, drawLabel: true);
+            // Cargo identity is surfaced by the proximity prompt. Keeping the
+            // floor crate unlabelled avoids a persistent floating tag in the room.
+            DrawCargoCrate(g, CellCenter(item.Cell), item, 1f, drawLabel: false);
         }
     }
 

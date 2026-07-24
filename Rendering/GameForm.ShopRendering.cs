@@ -6,62 +6,112 @@ internal sealed partial class GameForm
 {
     private void DrawCargoRoomContents(Graphics g)
     {
+        if (_maze is null) return;
+
         // Storage dressing is deliberately split into a floor pass and a fixture
         // pass. The first pass makes every object feel installed in the room; the
         // clear center of each footprint also communicates that the dressing is
         // scenery, not hidden collision.
-        foreach (var prop in _roomProps)
+        foreach (var room in _maze.Rooms)
         {
-            if (IsCellConcealed(prop.Cell) || !IsWorldCellInRenderRange(prop.Cell)) continue;
-            DrawRoomPropFloorMark(g, prop);
+            if (!_revealedRoomIds.Contains(room.Id)) continue;
+            var state = g.Save();
+            ClipToCargoRoom(g, room.Id);
+            foreach (var prop in _roomProps.Where(prop => prop.RoomId == room.Id))
+            {
+                if (IsCellConcealed(prop.Cell) || !IsWorldCellInRenderRange(prop.Cell)) continue;
+                DrawRoomPropFloorMark(g, prop);
+            }
+            if (_shopKiosk is not null && _shopKiosk.RoomId == room.Id &&
+                !IsCellConcealed(_shopKiosk.Cell) &&
+                IsWorldCellInRenderRange(_shopKiosk.Cell, 3f))
+                DrawShopKioskFloor(g, _shopKiosk);
+            g.Restore(state);
         }
-        if (_shopKiosk is not null && !IsCellConcealed(_shopKiosk.Cell) &&
-            IsWorldCellInRenderRange(_shopKiosk.Cell, 3f))
-            DrawShopKioskFloor(g, _shopKiosk);
 
-        foreach (var prop in _roomProps)
+        foreach (var room in _maze.Rooms)
         {
-            if (IsCellConcealed(prop.Cell) || !IsWorldCellInRenderRange(prop.Cell)) continue;
-            DrawRoomProp(g, prop);
+            if (!_revealedRoomIds.Contains(room.Id)) continue;
+            var state = g.Save();
+            ClipToCargoRoom(g, room.Id);
+            foreach (var prop in _roomProps.Where(prop => prop.RoomId == room.Id))
+            {
+                if (IsCellConcealed(prop.Cell) || !IsWorldCellInRenderRange(prop.Cell)) continue;
+                DrawRoomProp(g, prop);
+            }
+            foreach (var salvage in _roomSalvage.Where(salvage => salvage.RoomId == room.Id))
+            {
+                if (salvage.Collected || salvage.Sold || IsCellConcealed(salvage.Cell) ||
+                    !IsWorldCellInRenderRange(salvage.Cell))
+                    continue;
+                DrawRoomSalvage(g, salvage);
+            }
+            if (_shopKiosk is not null && _shopKiosk.RoomId == room.Id &&
+                !IsCellConcealed(_shopKiosk.Cell) &&
+                IsWorldCellInRenderRange(_shopKiosk.Cell, 3f))
+                DrawShopKiosk(g, _shopKiosk);
+            g.Restore(state);
         }
-        foreach (var salvage in _roomSalvage)
-        {
-            if (salvage.Collected || salvage.Sold || IsCellConcealed(salvage.Cell) ||
-                !IsWorldCellInRenderRange(salvage.Cell))
-                continue;
-            DrawRoomSalvage(g, salvage);
-        }
-        if (_shopKiosk is not null && !IsCellConcealed(_shopKiosk.Cell) &&
-            IsWorldCellInRenderRange(_shopKiosk.Cell, 3f))
-            DrawShopKiosk(g, _shopKiosk);
     }
 
-    private readonly record struct RoomPropPose(PointF Center, float Rotation);
+    private readonly record struct RoomFixturePose(
+        PointF Center,
+        float Rotation,
+        Direction WallSide);
 
-    private RoomPropPose GetRoomPropPose(RoomProp prop)
+    private RoomFixturePose GetRoomPropPose(RoomProp prop) =>
+        GetRoomFixturePose(prop.Cell, prop.WallSide);
+
+    private RoomFixturePose GetRoomFixturePose(Point cell, Direction wallSide)
     {
-        var center = CellCenter(prop.Cell);
-        var room = _maze?.GetRoomAt(prop.Cell);
-        if (room is null) return new RoomPropPose(center, 0);
-
-        var outward = new List<Point>(4);
-        if (!room.Contains(new Point(prop.Cell.X, prop.Cell.Y - 1))) outward.Add(new Point(0, -1));
-        if (!room.Contains(new Point(prop.Cell.X + 1, prop.Cell.Y))) outward.Add(new Point(1, 0));
-        if (!room.Contains(new Point(prop.Cell.X, prop.Cell.Y + 1))) outward.Add(new Point(0, 1));
-        if (!room.Contains(new Point(prop.Cell.X - 1, prop.Cell.Y))) outward.Add(new Point(-1, 0));
-        if (outward.Count == 0) return new RoomPropPose(center, 0);
-
-        var anchor = outward[prop.Variant % outward.Count];
-        var offset = _cellSize * .43f;
-        center = new PointF(center.X + anchor.X * offset, center.Y + anchor.Y * offset);
-        var rotation = anchor switch
+        var center = CellCenter(cell);
+        var outward = wallSide switch
         {
-            { X: 1 } => 90f,
-            { Y: 1 } => 180f,
-            { X: -1 } => 270f,
+            Direction.Up => new Point(0, -1),
+            Direction.Right => new Point(1, 0),
+            Direction.Down => new Point(0, 1),
+            _ => new Point(-1, 0)
+        };
+        var rotation = wallSide switch
+        {
+            Direction.Right => 90f,
+            Direction.Down => 180f,
+            Direction.Left => 270f,
             _ => 0f
         };
-        return new RoomPropPose(center, rotation);
+
+        // Each fixture is authored with its back at local -Y and its working
+        // face at +Y. Move the mount away from the wall's inner lip, then rotate
+        // that face into the room. This keeps beams and loose cables pointing
+        // inward whether the fixture lives north, east, south, or west.
+        var inwardOffset = _cellSize * .20f;
+        center = new PointF(
+            center.X - outward.X * inwardOffset,
+            center.Y - outward.Y * inwardOffset);
+        return new RoomFixturePose(center, rotation, wallSide);
+    }
+
+    private void ClipToCargoRoom(Graphics g, int roomId)
+    {
+        var room = _maze?.Rooms.FirstOrDefault(candidate => candidate.Id == roomId);
+        if (room is null) return;
+
+        // Union full cells rather than insetting each one. Internal joins remain
+        // seamless, while the room perimeter (including an L-room's concave
+        // notch) is an absolute render boundary. The wall pass later covers the
+        // outer half of this region, so no fixture can show through a wall.
+        using var roomRegion = new Region();
+        roomRegion.MakeEmpty();
+        foreach (var cell in room.Cells)
+        {
+            var center = CellCenter(cell);
+            roomRegion.Union(new RectangleF(
+                center.X - _cellSize / 2,
+                center.Y - _cellSize / 2,
+                _cellSize,
+                _cellSize));
+        }
+        g.SetClip(roomRegion, CombineMode.Intersect);
     }
 
     private int RoomPropFrame(RoomProp prop, float rate, int frameCount)
@@ -461,12 +511,17 @@ internal sealed partial class GameForm
 
     private void DrawShopKioskFloor(Graphics g, ShopKiosk kiosk)
     {
-        var p = CellCenter(kiosk.Cell);
+        var pose = GetRoomFixturePose(kiosk.Cell, kiosk.WallSide);
+        var p = pose.Center;
         var pulse = PositiveHash((int)MathF.Floor(_time * 5) + kiosk.RoomId) % 8;
         using var aura = new SolidBrush(Color.FromArgb(pulse < 2 ? 41 : 27, C.Signal));
         using var pad = new SolidBrush(Color.FromArgb(128, 24, 31, 27));
         using var safeLine = new SolidBrush(Color.FromArgb(93, C.Signal));
         using var deadLine = new SolidBrush(Color.FromArgb(78, C.Steel));
+        var state = g.Save();
+        g.TranslateTransform(p.X, p.Y);
+        g.RotateTransform(pose.Rotation);
+        g.TranslateTransform(-p.X, -p.Y);
         g.FillPolygon(aura,
         [
             new PointF(p.X - 47, p.Y - 29), new PointF(p.X + 47, p.Y - 29),
@@ -486,15 +541,24 @@ internal sealed partial class GameForm
         }
         g.FillRectangle(safeLine, p.X - 46, p.Y - 4, 5, 14);
         g.FillRectangle(safeLine, p.X + 41, p.Y - 4, 5, 14);
+        g.Restore(state);
     }
 
     private void DrawShopKiosk(Graphics g, ShopKiosk kiosk)
     {
-        var p = ShopKioskRenderCenter(kiosk);
+        var pose = GetRoomFixturePose(kiosk.Cell, kiosk.WallSide);
+        var p = pose.Center;
         var bodyFrame = PositiveHash((int)MathF.Floor(_time * 2.2f) + kiosk.RoomId * 3) % 4;
         var player = CellCenter(_visualCell);
-        var lookX = Math.Abs(player.X - p.X) < 12 ? 0 : Math.Sign(player.X - p.X);
-        var lookY = Math.Abs(player.Y - p.Y) < 12 ? 0 : Math.Sign(player.Y - p.Y);
+        var inverseRadians = -pose.Rotation * MathF.PI / 180f;
+        var relativeX = player.X - p.X;
+        var relativeY = player.Y - p.Y;
+        var localPlayerX = relativeX * MathF.Cos(inverseRadians) -
+                           relativeY * MathF.Sin(inverseRadians);
+        var localPlayerY = relativeX * MathF.Sin(inverseRadians) +
+                           relativeY * MathF.Cos(inverseRadians);
+        var lookX = Math.Abs(localPlayerX) < 12 ? 0 : Math.Sign(localPlayerX);
+        var lookY = Math.Abs(localPlayerY) < 12 ? 0 : Math.Sign(localPlayerY);
         using var gantryShadow = new SolidBrush(Color.FromArgb(220, C.Void));
         using var gantry = new SolidBrush(Color.FromArgb(69, 78, 66));
         using var edge = new SolidBrush(Color.FromArgb(128, 124, 94));
@@ -504,6 +568,11 @@ internal sealed partial class GameForm
             StartCap = LineCap.Square,
             EndCap = LineCap.Square
         };
+
+        var state = g.Save();
+        g.TranslateTransform(p.X, p.Y);
+        g.RotateTransform(pose.Rotation);
+        g.TranslateTransform(-p.X, -p.Y);
 
         // A freestanding gantry holds the same unknowable silhouette seen in the
         // full shop window. It hangs above the traversable tile so the drone can
@@ -535,35 +604,17 @@ internal sealed partial class GameForm
         g.FillRectangle(signal, p.X + 24, p.Y + 19, 8, 4);
         for (var x = -14; x <= 14; x += 7)
             g.FillRectangle(gantryShadow, p.X + x, p.Y + 18, 3, 5);
+        g.Restore(state);
 
         var near = IsShopKioskInRange(_playerCell);
+        var labelRadians = pose.Rotation * MathF.PI / 180f;
+        var labelCenter = new PointF(
+            p.X - MathF.Sin(labelRadians) * 35,
+            p.Y + MathF.Cos(labelRadians) * 35);
         if (near || ((int)(_time * 2 + kiosk.RoomId) & 1) == 0)
-            LabFont.Draw(g, near ? "E / TRADE" : "SAFE TRADE", p.X, p.Y + 35, 1,
+            LabFont.Draw(g, near ? "E / TRADE" : "SAFE TRADE",
+                labelCenter.X, labelCenter.Y, 1,
                 near ? C.Signal : C.Sick, LabTextAlign.Center, 0);
-    }
-
-    private PointF ShopKioskRenderCenter(ShopKiosk kiosk)
-    {
-        var center = CellCenter(kiosk.Cell);
-        var room = _maze?.Rooms.FirstOrDefault(candidate =>
-            candidate.Id == kiosk.RoomId);
-        if (room is null) return center;
-
-        var outward = new List<Point>(4);
-        if (!room.Contains(new Point(kiosk.Cell.X, kiosk.Cell.Y - 1)))
-            outward.Add(new Point(0, -1));
-        if (!room.Contains(new Point(kiosk.Cell.X + 1, kiosk.Cell.Y)))
-            outward.Add(new Point(1, 0));
-        if (!room.Contains(new Point(kiosk.Cell.X, kiosk.Cell.Y + 1)))
-            outward.Add(new Point(0, 1));
-        if (!room.Contains(new Point(kiosk.Cell.X - 1, kiosk.Cell.Y)))
-            outward.Add(new Point(-1, 0));
-        if (outward.Count == 0) return center;
-
-        var anchor = outward[PositiveHash(kiosk.RoomId) % outward.Count];
-        var offset = _cellSize * .36f;
-        return new PointF(center.X + anchor.X * offset,
-            center.Y + anchor.Y * offset);
     }
 
     private void DrawShopConsole(Graphics g)

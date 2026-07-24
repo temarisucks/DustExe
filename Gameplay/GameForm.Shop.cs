@@ -46,6 +46,7 @@ internal sealed partial class GameForm
         var kioskCandidates = shopRoom.Cells
             .Where(cell => cell != shopRoom.DoorCell && !occupied.Contains(cell))
             .OrderByDescending(cell => IsRoomPerimeterCell(shopRoom, cell))
+            .ThenByDescending(cell => RoomWallSides(shopRoom, cell).Count == 1)
             .ThenByDescending(cell => Manhattan(cell, shopRoom.DoorCell))
             .ThenBy(cell => PositiveHash(cell.X * 73856093 ^ cell.Y * 19349663 ^ _level))
             .ToList();
@@ -56,7 +57,13 @@ internal sealed partial class GameForm
             kioskCandidates.Cast<Point?>().FirstOrDefault();
         if (kioskCell is { } selectedKioskCell)
         {
-            _shopKiosk = new ShopKiosk { RoomId = shopRoom.Id, Cell = selectedKioskCell };
+            _shopKiosk = new ShopKiosk
+            {
+                RoomId = shopRoom.Id,
+                Cell = selectedKioskCell,
+                WallSide = SelectRoomWallSide(
+                    shopRoom, selectedKioskCell, shopRoom.Id * 47 + _level)
+            };
             occupied.Add(selectedKioskCell);
             foreach (var apronCell in shopRoom.Cells.Where(
                          cell => Manhattan(cell, selectedKioskCell) == 1))
@@ -68,7 +75,10 @@ internal sealed partial class GameForm
             var candidates = room.Cells
                 .Where(cell => cell != room.DoorCell && !occupied.Contains(cell) &&
                                Manhattan(cell, room.DoorCell) > 1 && IsRoomPerimeterCell(room, cell))
-                .OrderBy(cell => PositiveHash(cell.X * 92821 ^ cell.Y * 68917 ^ room.Id * 1327 ^ _level * 31))
+                // A straight wall section lets the full silhouette sit inside the
+                // chamber. Corner cells remain fallbacks for small and L-shaped rooms.
+                .OrderByDescending(cell => RoomWallSides(room, cell).Count == 1)
+                .ThenBy(cell => PositiveHash(cell.X * 92821 ^ cell.Y * 68917 ^ room.Id * 1327 ^ _level * 31))
                 .ToList();
             var propCount = Math.Clamp(room.Cells.Count / 7, 3, 6);
             for (var index = 0; index < Math.Min(propCount, candidates.Count); index++)
@@ -79,6 +89,7 @@ internal sealed partial class GameForm
                 {
                     RoomId = room.Id,
                     Cell = cell,
+                    WallSide = SelectRoomWallSide(room, cell, hash / 17),
                     Kind = (RoomPropKind)(hash % Enum.GetValues<RoomPropKind>().Length),
                     Variant = (hash / 17) % 4
                 });
@@ -144,6 +155,51 @@ internal sealed partial class GameForm
         !room.Contains(new Point(cell.X + 1, cell.Y)) ||
         !room.Contains(new Point(cell.X, cell.Y + 1)) ||
         !room.Contains(new Point(cell.X - 1, cell.Y));
+
+    private static IReadOnlyList<Direction> RoomWallSides(CargoRoom room, Point cell)
+    {
+        var sides = new List<Direction>(4);
+        if (!room.Contains(new Point(cell.X, cell.Y - 1))) sides.Add(Direction.Up);
+        if (!room.Contains(new Point(cell.X + 1, cell.Y))) sides.Add(Direction.Right);
+        if (!room.Contains(new Point(cell.X, cell.Y + 1))) sides.Add(Direction.Down);
+        if (!room.Contains(new Point(cell.X - 1, cell.Y))) sides.Add(Direction.Left);
+        return sides;
+    }
+
+    private static Direction SelectRoomWallSide(CargoRoom room, Point cell, int selector)
+    {
+        var sides = RoomWallSides(room, cell);
+        if (sides.Count > 0)
+            return sides[PositiveHash(selector) % sides.Count];
+
+        // This is only a defensive fallback for an unusually crowded room where
+        // a fixture has to use an interior cell. It still faces the nearest wall.
+        var distances = new List<(Direction Side, int Distance)>(4);
+        foreach (var side in Enum.GetValues<Direction>())
+        {
+            var cursor = cell;
+            var distance = 0;
+            do
+            {
+                cursor = side switch
+                {
+                    Direction.Up => new Point(cursor.X, cursor.Y - 1),
+                    Direction.Right => new Point(cursor.X + 1, cursor.Y),
+                    Direction.Down => new Point(cursor.X, cursor.Y + 1),
+                    _ => new Point(cursor.X - 1, cursor.Y)
+                };
+                distance++;
+            } while (room.Contains(cursor));
+            distances.Add((side, distance));
+        }
+
+        var nearest = distances.Min(item => item.Distance);
+        var nearestSides = distances
+            .Where(item => item.Distance == nearest)
+            .Select(item => item.Side)
+            .ToArray();
+        return nearestSides[PositiveHash(selector) % nearestSides.Length];
+    }
 
     private bool TryOpenShopAtPlayer()
     {

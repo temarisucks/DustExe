@@ -23,7 +23,8 @@ internal sealed partial class GameForm
         FieldDirectiveNode node,
         int nodeIndex)
     {
-        var center = MissionFixtureRenderCenter(node.Cell, node.RoomId, node.Number);
+        var pose = GetFieldDirectivePose(node);
+        var center = PointF.Empty;
         var active = directive.IsNodeActive(nodeIndex);
         var owned = IsObjectiveAssignedToLocal(directive.AssignedPlayerId);
         var available = directive.CanActivate(nodeIndex);
@@ -43,8 +44,12 @@ internal sealed partial class GameForm
             StartCap = LineCap.Square,
             EndCap = LineCap.Square
         };
-        var tileCenter = CellCenter(node.Cell);
-        g.DrawLine(cable, center.X, center.Y + 17, tileCenter.X, tileCenter.Y + 29);
+
+        var graphicsState = g.Save();
+        ClipToCargoRoom(g, node.RoomId);
+        g.TranslateTransform(pose.Center.X, pose.Center.Y);
+        g.RotateTransform(pose.Rotation);
+        g.DrawLine(cable, center.X, center.Y + 17, center.X, center.Y + 44);
 
         switch (directive.Kind)
         {
@@ -72,6 +77,17 @@ internal sealed partial class GameForm
         var ownerMark = owned ? null : DirectiveOwnerMark(directive.AssignedPlayerId);
         DrawDirectiveStatusPlate(g, center, $"{prefix}{node.Number}", ownerMark,
             stateColor, active, owned);
+        g.Restore(graphicsState);
+    }
+
+    private RoomFixturePose GetFieldDirectivePose(FieldDirectiveNode node)
+    {
+        var pose = GetRoomFixturePose(node.Cell, node.WallSide);
+        var room = _maze?.Rooms.FirstOrDefault(candidate =>
+            candidate.Id == node.RoomId);
+        return room is not null && RoomWallSides(room, node.Cell).Count == 0
+            ? pose with { Center = CellCenter(node.Cell) }
+            : pose;
     }
 
     private string DirectiveOwnerMark(string? ownerPlayerId)
@@ -240,22 +256,4 @@ internal sealed partial class GameForm
             stateColor, LabTextAlign.Center, 0);
     }
 
-    private PointF MissionFixtureRenderCenter(Point cell, int roomId, int variant)
-    {
-        var center = CellCenter(cell);
-        var room = _maze?.Rooms.FirstOrDefault(candidate => candidate.Id == roomId);
-        if (room is null) return center;
-
-        var outward = new List<Point>(4);
-        if (!room.Contains(new Point(cell.X, cell.Y - 1))) outward.Add(new Point(0, -1));
-        if (!room.Contains(new Point(cell.X + 1, cell.Y))) outward.Add(new Point(1, 0));
-        if (!room.Contains(new Point(cell.X, cell.Y + 1))) outward.Add(new Point(0, 1));
-        if (!room.Contains(new Point(cell.X - 1, cell.Y))) outward.Add(new Point(-1, 0));
-        if (outward.Count == 0) return center;
-
-        var direction = outward[Math.Abs(variant - 1) % outward.Count];
-        var offset = _cellSize * .35f;
-        return new PointF(center.X + direction.X * offset,
-            center.Y + direction.Y * offset);
-    }
 }
