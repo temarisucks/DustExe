@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Dust")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+906bbd2d57d0c740695762e521a9b15e1d01280a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+5ec0974d1567b56c89b6108bf48a8d6ebb5acae2")]
 [assembly: System.Reflection.AssemblyProductAttribute("Dust")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Dust")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

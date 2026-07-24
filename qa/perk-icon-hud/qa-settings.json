@@ -1,0 +1,82 @@
+{
+  "Brightness": 100,
+  "Volume": 0,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 0,
+  "DroneModel": 0,
+  "DroneCoreArgb": -8927848,
+  "DroneFrameArgb": -4867945,
+  "OnlineServerUrl": "wss://dustexe-production.up.railway.app/ws",
+  "LastOnlineUsername": "",
+  "TutorialOfferVersion": 1,
+  "TutorialCompletedVersion": 1,
+  "Progression": {
+    "AchievementStates": [
+      {
+        "Id": 2,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-24T02:05:50.0284191+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 4,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 15
+      },
+      {
+        "Id": 7,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 8,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 11,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 180
+      },
+      {
+        "Id": 12,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 13,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 100
+      },
+      {
+        "Id": 16,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 1
+      },
+      {
+        "Id": 17,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-23T00:00:00+00:00",
+        "Progress": 1
+      }
+    ],
+    "EquippedPerks": [
+      1,
+      2,
+      3,
+      5,
+      7,
+      8
+    ],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  }
+}

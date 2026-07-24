@@ -1,0 +1,27 @@
+{
+  "Brightness": 100,
+  "Volume": 55,
+  "ResolutionIndex": 0,
+  "Fullscreen": false,
+  "TotalCredits": 120,
+  "DroneModel": 0,
+  "DroneCoreArgb": -8927848,
+  "DroneFrameArgb": -4867945,
+  "OnlineServerUrl": "wss://dustexe-production.up.railway.app/ws",
+  "LastOnlineUsername": "",
+  "TutorialOfferVersion": 1,
+  "TutorialCompletedVersion": 0,
+  "Progression": {
+    "AchievementStates": [
+      {
+        "Id": 12,
+        "IsUnlocked": true,
+        "UnlockedAtUtc": "2026-07-24T02:15:16.2047939+00:00",
+        "Progress": 1
+      }
+    ],
+    "EquippedPerks": [],
+    "CurrentWinStreak": 0,
+    "BestWinStreak": 0
+  }
+}
