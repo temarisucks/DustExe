@@ -350,6 +350,14 @@ internal sealed class LobbyManager
                 lobby.ServerSequence = 0;
                 lobby.AuthorityEpoch++;
                 lobby.LatestSnapshot = null;
+                lobby.RunStartPlayers.Clear();
+                lobby.RunStartPlayers.AddRange(lobby.Members
+                    .OrderBy(member => member.JoinOrder)
+                    .ThenBy(member => member.PlayerId)
+                    .Select(member => new LobbyRunPlayer(
+                        member.PlayerId,
+                        member.Username,
+                        member.JoinOrder)));
                 foreach (var member in lobby.Members)
                 {
                     member.LastInputClientSequence = -1;
@@ -425,6 +433,7 @@ internal sealed class LobbyManager
                 lobby.Seed = null;
                 lobby.ServerSequence = 0;
                 lobby.LatestSnapshot = null;
+                lobby.RunStartPlayers.Clear();
                 lobby.Revision++;
                 DirectoryChangedLocked();
             }
@@ -563,7 +572,8 @@ internal sealed class LobbyManager
                 eventData,
                 peer,
                 requestId,
-                CancellationToken.None);
+                CancellationToken.None,
+                replacePendingSnapshot: kind == "snapshot");
         }
         finally
         {
@@ -915,13 +925,15 @@ internal sealed class LobbyManager
         object data,
         ClientSession? requester,
         string? requestId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool replacePendingSnapshot = false)
     {
         await Task.WhenAll(peers.Select(peer => peer.SendAsync(
             type,
             ReferenceEquals(peer, requester) ? requestId : null,
             data,
-            cancellationToken)));
+            cancellationToken,
+            replacePendingSnapshot)));
     }
 
     private object[] BuildLobbySummariesLocked(string search)
@@ -962,7 +974,8 @@ internal sealed class LobbyManager
         seed = lobby.Seed,
         runLevel = lobby.RunLevel,
         settings = lobby.Settings,
-        players = BuildPlayers(lobby)
+        players = BuildPlayers(lobby),
+        runStartPlayers = BuildRunStartPlayers(lobby)
     };
 
     private static object BuildStartedDataLocked(Lobby lobby) => new
@@ -975,7 +988,8 @@ internal sealed class LobbyManager
         authorityEpoch = lobby.AuthorityEpoch,
         runLevel = lobby.RunLevel,
         settings = lobby.Settings,
-        players = BuildPlayers(lobby)
+        players = BuildPlayers(lobby),
+        runStartPlayers = BuildRunStartPlayers(lobby)
     };
 
     private static object[] BuildPlayers(Lobby lobby) =>
@@ -987,6 +1001,18 @@ internal sealed class LobbyManager
                 username = member.Username,
                 joinOrder = member.JoinOrder,
                 connected = member.Peer is not null
+            })
+            .ToArray();
+
+    private static object[] BuildRunStartPlayers(Lobby lobby) =>
+        lobby.RunStartPlayers
+            .OrderBy(player => player.JoinOrder)
+            .ThenBy(player => player.PlayerId)
+            .Select(player => (object)new
+            {
+                playerId = player.PlayerId,
+                username = player.Username,
+                joinOrder = player.JoinOrder
             })
             .ToArray();
 

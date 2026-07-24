@@ -90,6 +90,10 @@ internal sealed partial class GameForm
     {
         if (_mode != ScreenMode.Playing || _moveProgress < 1 || _hitEffect > 0 ||
             _survivorObjective is not { } objective) return false;
+        if (!IsObjectiveAssignedToLocal(objective.AssignedPlayerId) &&
+            (IsPlayerInSurvivorRange(objective.WorkerCell) ||
+             IsPlayerInSurvivorRange(objective.RequesterCell)))
+            return false;
 
         if (IsPlayerInSurvivorRange(objective.WorkerCell) &&
             objective.Stage is SurvivorObjectiveStage.Uncontacted or SurvivorObjectiveStage.Searching)
@@ -137,6 +141,10 @@ internal sealed partial class GameForm
     private string? SurvivorInteractionPrompt()
     {
         if (_survivorObjective is not { } objective) return null;
+        if (!IsObjectiveAssignedToLocal(objective.AssignedPlayerId) &&
+            (IsPlayerInSurvivorRange(objective.WorkerCell) ||
+             IsPlayerInSurvivorRange(objective.RequesterCell)))
+            return null;
         if (IsPlayerInSurvivorRange(objective.WorkerCell) &&
             objective.Stage is SurvivorObjectiveStage.Uncontacted or SurvivorObjectiveStage.Searching)
             return $"E  HELP {objective.WorkerName.ToUpperInvariant()}";
@@ -175,6 +183,8 @@ internal sealed partial class GameForm
     private string SurvivorTelemetryText()
     {
         if (_survivorObjective is not { } objective) return string.Empty;
+        if (!IsObjectiveAssignedToLocal(objective.AssignedPlayerId))
+            return $"TEAM FILE / {ObjectiveOwnerName(objective.AssignedPlayerId)}";
         return objective.Stage switch
         {
             SurvivorObjectiveStage.Uncontacted => "OPTIONAL SIGNAL / UNREAD",

@@ -43,15 +43,24 @@ internal sealed partial class GameForm
             .Concat(_creditPickups.Select(item => item.Cell))
             .Concat(_circuitSwitches.Select(item => item.Cell))
             .ToHashSet();
-        var kioskCell = shopRoom.Cells
+        var kioskCandidates = shopRoom.Cells
             .Where(cell => cell != shopRoom.DoorCell && !occupied.Contains(cell))
-            .OrderByDescending(cell => Manhattan(cell, shopRoom.DoorCell))
+            .OrderByDescending(cell => IsRoomPerimeterCell(shopRoom, cell))
+            .ThenByDescending(cell => Manhattan(cell, shopRoom.DoorCell))
             .ThenBy(cell => PositiveHash(cell.X * 73856093 ^ cell.Y * 19349663 ^ _level))
-            .FirstOrDefault(shopRoom.DoorCell);
-        if (kioskCell != shopRoom.DoorCell)
+            .ToList();
+        var kioskCell = kioskCandidates
+            .Where(cell => occupied.All(other => Manhattan(cell, other) > 1))
+            .Cast<Point?>()
+            .FirstOrDefault() ??
+            kioskCandidates.Cast<Point?>().FirstOrDefault();
+        if (kioskCell is { } selectedKioskCell)
         {
-            _shopKiosk = new ShopKiosk { RoomId = shopRoom.Id, Cell = kioskCell };
-            occupied.Add(kioskCell);
+            _shopKiosk = new ShopKiosk { RoomId = shopRoom.Id, Cell = selectedKioskCell };
+            occupied.Add(selectedKioskCell);
+            foreach (var apronCell in shopRoom.Cells.Where(
+                         cell => Manhattan(cell, selectedKioskCell) == 1))
+                occupied.Add(apronCell);
         }
 
         foreach (var room in _maze.Rooms)
@@ -139,7 +148,7 @@ internal sealed partial class GameForm
     private bool TryOpenShopAtPlayer()
     {
         if (_mode != ScreenMode.Playing || _shopKiosk is null ||
-            _shopKiosk.Cell != _playerCell || _moveProgress < 1 || _hitEffect > 0) return false;
+            !IsShopKioskInRange(_playerCell) || _moveProgress < 1 || _hitEffect > 0) return false;
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _shopEnteredAt = DateTime.Now;
@@ -152,6 +161,10 @@ internal sealed partial class GameForm
         ResetHover();
         return true;
     }
+
+    private bool IsShopKioskInRange(Point playerCell) =>
+        _shopKiosk is not null &&
+        CanInteractWithMissionCell(playerCell, _shopKiosk.Cell);
 
     private void LeaveShop()
     {

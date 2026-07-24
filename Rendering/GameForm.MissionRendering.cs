@@ -253,15 +253,21 @@ internal sealed partial class GameForm
         string? text = null;
         var circuitPrompt = CircuitSwitchPrompt();
         var survivorPrompt = SurvivorInteractionPrompt();
+        var directivePrompt = FieldDirectivePrompt();
         var cargo = FindCargoInLatchRange();
+        var teammatePrompt = TeammateObjectivePrompt();
         if (circuitPrompt is not null) text = circuitPrompt;
         else if (survivorPrompt is not null) text = survivorPrompt;
-        else if (_shopKiosk is not null && _shopKiosk.Cell == _playerCell)
+        else if (IsShopKioskInRange(_playerCell))
             text = "E  ENTER RECLAMATION WINDOW / SAFE";
+        else if (directivePrompt is not null) text = directivePrompt;
         else if (cargo is not null)
-            text = cargo.Required
-                ? $"E / PICK UP {CargoName(cargo.Kind)} / {cargo.Code}"
-                : $"{CargoName(cargo.Kind)} / {cargo.Code} / NOT MANIFESTED";
+            text = cargo.Required && !IsObjectiveAssignedToLocal(cargo.AssignedPlayerId)
+                ? $"{CargoName(cargo.Kind)} / ASSIGNED {ObjectiveOwnerName(cargo.AssignedPlayerId)}"
+                : cargo.Required
+                    ? $"E / PICK UP {CargoName(cargo.Kind)} / {cargo.Code}"
+                    : $"{CargoName(cargo.Kind)} / {cargo.Code} / NOT MANIFESTED";
+        else if (teammatePrompt is not null) text = teammatePrompt;
         else if (_missionNoticeTimer > 0) text = _missionNotice;
         if (text is null) return;
 
@@ -270,8 +276,9 @@ internal sealed partial class GameForm
             _mazeRect.Bottom - 64, width, 42);
         DrawCutPanel(g, panel, Color.FromArgb(232, C.Ink), C.Oxide, 8, 3);
         LabFont.Draw(g, text, panel.X + panel.Width / 2, panel.Y + 12, 1,
-            circuitPrompt is not null || survivorPrompt is not null || cargo?.Required == true ||
-            _shopKiosk?.Cell == _playerCell || _missionNoticeTimer > 0 ? C.Signal : C.Sick,
+            circuitPrompt is not null || survivorPrompt is not null || directivePrompt is not null ||
+            cargo?.Required == true ||
+            IsShopKioskInRange(_playerCell) || _missionNoticeTimer > 0 ? C.Signal : C.Sick,
             LabTextAlign.Center);
     }
 }

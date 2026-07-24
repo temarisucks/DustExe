@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.Json;
 
@@ -6,8 +7,10 @@ namespace Dust;
 
 internal sealed partial class GameForm
 {
-    private const int OnlineGameplayProtocolVersion = 1;
+    private const int OnlineGameplayProtocolVersion = 2;
     private const float OnlineSnapshotInterval = .09f;
+    private static readonly TimeSpan OnlineSnapshotSendTimeout =
+        TimeSpan.FromSeconds(1.5);
 
     private static readonly JsonSerializerOptions OnlineGameplayJson =
         new(JsonSerializerDefaults.Web)
@@ -18,6 +21,8 @@ internal sealed partial class GameForm
     private readonly ConcurrentQueue<OnlineMessage> _onlineGameplayInbox = new();
     private readonly Dictionary<string, OnlineRemotePlayer> _onlinePlayers =
         new(StringComparer.Ordinal);
+    private readonly object _onlineSnapshotSendGate = new();
+    private CancellationTokenSource _onlineSnapshotSendLifetime = new();
     private long _onlineRunSeed;
     private long _onlineClientSequence;
     private long _onlineLastLocalMovementSequence;
@@ -28,14 +33,25 @@ internal sealed partial class GameForm
     private long _onlineAuthorityRevision;
     private string _onlineAuthorityHostId = string.Empty;
     private float _onlineSnapshotTimer;
+    private float _onlineFrameWallDelta = .016f;
+    private long _onlineLastWallClockTimestamp;
     private bool _onlineAppearanceSent;
     private bool _onlineLocalDefeated;
     private bool _onlineCompletionApplied;
+    private bool _onlineRunCompletedAsCasualty;
     private bool _onlineFailureApplied;
     private bool _onlineLocalWarningActive;
     private bool _onlineRosterRefreshPending;
+    private bool _onlineProtocolMismatchShown;
     private OnlineWorldSnapshot? _onlinePendingSnapshot;
+    private OnlineSnapshotDispatch? _onlineQueuedSnapshotDispatch;
+    private bool _onlineSnapshotSendActive;
     private long _onlineLastAppliedShopRevision;
+
+    private sealed record OnlineSnapshotDispatch(
+        OnlineWorldSnapshot Snapshot,
+        long AuthorityEpoch,
+        CancellationToken SendCancellation);
 
     private bool IsOnlineGameplayActive =>
         _onlineMatchActive && _onlineLobby?.Seed is not null &&
@@ -60,6 +76,7 @@ internal sealed partial class GameForm
     {
         if (state.Seed is null || state.Players.Count is < 1 or > 4) return;
 
+        CaptureOnlineObjectiveRoster(state);
         _onlineRunSeed = state.Seed.Value;
         _activeRunSettings = state.Settings.Snapshot();
         _level = Math.Clamp(state.RunLevel, 1, 1000);
@@ -74,13 +91,18 @@ internal sealed partial class GameForm
         _onlineWorldRevision = 0;
         _onlineSimulationTick = 0;
         _onlineSnapshotTimer = 0;
+        _onlineFrameWallDelta = .016f;
+        _onlineLastWallClockTimestamp = Stopwatch.GetTimestamp();
         _onlineAppearanceSent = false;
         _onlineLocalDefeated = false;
         _onlineCompletionApplied = false;
+        _onlineRunCompletedAsCasualty = false;
         _onlineFailureApplied = false;
         _onlineLocalWarningActive = false;
         _onlineRosterRefreshPending = false;
+        _onlineProtocolMismatchShown = false;
         _onlinePendingSnapshot = null;
+        RenewOnlineSnapshotSendLifetime();
         _onlineLastAppliedShopRevision = 0;
         _onlinePlayers.Clear();
         while (_onlineGameplayInbox.TryDequeue(out _)) { }
@@ -111,6 +133,9 @@ internal sealed partial class GameForm
         var previousHost = _onlineAuthorityHostId;
         _onlineAuthorityHostId = state.HostPlayerId;
         _onlineAuthorityRevision = Math.Max(_onlineAuthorityRevision, state.AuthorityEpoch);
+        if (!string.Equals(
+                previousHost, _onlineAuthorityHostId, StringComparison.Ordinal))
+            RenewOnlineSnapshotSendLifetime();
         if (_mode == ScreenMode.Loading)
         {
             _onlineRosterRefreshPending = true;
@@ -134,6 +159,8 @@ internal sealed partial class GameForm
                 DropOnlineCargo(player);
         }
         ReleaseUnavailableOnlineEscort(state);
+        if (IsOnlineSimulationHost)
+            ReassignObjectivesFromUnavailableOwners(present);
 
         if (previousHost != _onlineAuthorityHostId && IsOnlineSimulationHost)
         {
@@ -175,6 +202,8 @@ internal sealed partial class GameForm
         if (_mode is not (ScreenMode.Playing or ScreenMode.Shop or
             ScreenMode.Won or ScreenMode.Failed))
             return;
+        var wallDeltaTime = MeasureOnlineWallDelta(deltaTime);
+        _onlineFrameWallDelta = wallDeltaTime;
         if (_onlineRosterRefreshPending && _onlineLobby is { } refreshedLobby)
         {
             _onlineRosterRefreshPending = false;
@@ -187,6 +216,8 @@ internal sealed partial class GameForm
         EnsureOnlineRoster();
         if (IsOnlineSimulationHost)
         {
+            ReassignObjectivesFromUnavailableOwners(
+                AvailableObjectivePlayerIds());
             foreach (var player in _onlinePlayers.Values)
             {
                 if (player.MoveProgress >= 1 &&
@@ -205,23 +236,43 @@ internal sealed partial class GameForm
             SendOnlineAppearance();
         }
 
-        UpdateOnlinePlayerPresentation(deltaTime);
+        UpdateOnlinePlayerPresentation(wallDeltaTime);
         if (_onlinePendingSnapshot is not null && _mode is ScreenMode.Playing or ScreenMode.Shop)
         {
             var pending = _onlinePendingSnapshot;
             _onlinePendingSnapshot = null;
             ApplyOnlineSnapshot(pending);
         }
+        UpdateOnlineHollowPresentation(wallDeltaTime);
 
         if (!IsOnlineSimulationHost) return;
-        _onlineSnapshotTimer += deltaTime;
+        _onlineSnapshotTimer += wallDeltaTime;
         if (_onlineSnapshotTimer < OnlineSnapshotInterval) return;
         _onlineSnapshotTimer %= OnlineSnapshotInterval;
         SendOnlineSnapshot();
     }
 
+    private float MeasureOnlineWallDelta(float fallback)
+    {
+        var now = Stopwatch.GetTimestamp();
+        var previous = _onlineLastWallClockTimestamp;
+        _onlineLastWallClockTimestamp = now;
+        if (previous <= 0 || now <= previous) return fallback;
+        return Math.Clamp(
+            (float)Stopwatch.GetElapsedTime(previous, now).TotalSeconds,
+            .001f,
+            .125f);
+    }
+
+    private float OnlineAuthoritySimulationDelta(float fallback) =>
+        IsOnlineSimulationHost
+            ? Math.Clamp(_onlineFrameWallDelta, .001f, .125f)
+            : fallback;
+
     private void DrainOnlineGameplayMessages()
     {
+        JsonElement? newestSnapshotPayload = null;
+        var newestWorldRevision = long.MinValue;
         while (_onlineGameplayInbox.TryDequeue(out var message))
         {
             if (string.Equals(message.Type, "game.checkpoint", StringComparison.Ordinal))
@@ -258,15 +309,37 @@ internal sealed partial class GameForm
                 continue;
             try
             {
-                var snapshot = JsonSerializer.Deserialize<OnlineWorldSnapshot>(
-                    payload.GetRawText(), OnlineGameplayJson);
-                if (snapshot is not null) ApplyOnlineSnapshot(snapshot);
+                if (!TryProperty(payload, "protocolVersion", out var protocolNode) ||
+                    !protocolNode.TryGetInt32(out var protocolVersion))
+                    continue;
+                if (protocolVersion != OnlineGameplayProtocolVersion)
+                {
+                    ReportOnlineProtocolMismatch(protocolVersion);
+                    continue;
+                }
+                if (!TryProperty(payload, "worldRevision", out var revisionNode) ||
+                    !revisionNode.TryGetInt64(out var worldRevision) ||
+                    worldRevision <= newestWorldRevision)
+                    continue;
+                newestWorldRevision = worldRevision;
+                newestSnapshotPayload = payload;
             }
-            catch (JsonException)
+            catch (InvalidOperationException)
             {
-                // A malformed checkpoint is ignored; the next host checkpoint
+                // A malformed snapshot is ignored; the next host checkpoint
                 // repairs state without taking down the gameplay loop.
             }
+        }
+        if (newestSnapshotPayload is not { } newestPayload) return;
+        try
+        {
+            var newestSnapshot = JsonSerializer.Deserialize<OnlineWorldSnapshot>(
+                newestPayload.GetRawText(), OnlineGameplayJson);
+            if (newestSnapshot is not null) ApplyOnlineSnapshot(newestSnapshot);
+        }
+        catch (JsonException)
+        {
+            // The next authoritative snapshot repairs malformed relay state.
         }
     }
 
@@ -288,14 +361,39 @@ internal sealed partial class GameForm
             var snapshot = JsonSerializer.Deserialize<OnlineWorldSnapshot>(
                 payload.GetRawText(), OnlineGameplayJson);
             if (snapshot is null) return;
+            if (!IsOnlineSnapshotProtocolCompatible(snapshot)) return;
+            if (snapshot.Seed != _onlineRunSeed) return;
+
+            var activeHostId = _onlineLobby?.HostPlayerId ?? string.Empty;
+            var sourceHostId = StringProperty(data, "senderPlayerId");
+            if (isMigration)
+            {
+                if (!string.IsNullOrWhiteSpace(sourceHostId) &&
+                    !string.Equals(
+                        snapshot.HostPlayerId,
+                        sourceHostId,
+                        StringComparison.Ordinal))
+                    return;
+            }
+            else
+            {
+                if (!string.Equals(
+                        snapshot.HostPlayerId,
+                        activeHostId,
+                        StringComparison.Ordinal) ||
+                    snapshot.WorldRevision <= _onlineWorldRevision)
+                    return;
+            }
+
             // A migration checkpoint was authored by the previous host. The
             // relay supplies the new epoch and only the elected peer may publish
             // its continuation.
-            snapshot.HostPlayerId = _onlineLobby?.HostPlayerId ?? snapshot.HostPlayerId;
+            snapshot.HostPlayerId = activeHostId;
             snapshot.AuthorityRevision = authorityEpoch;
             _onlineLastServerSequence = Math.Max(
                 _onlineLastServerSequence, serverSequence);
-            if (snapshot.WorldRevision <= _onlineWorldRevision)
+            if (isMigration &&
+                snapshot.WorldRevision <= _onlineWorldRevision)
                 _onlineWorldRevision = Math.Max(0, snapshot.WorldRevision - 1);
             ApplyOnlineSnapshot(snapshot);
         }
@@ -464,13 +562,91 @@ internal sealed partial class GameForm
         if (_onlineClient is null || !_onlineClient.IsConnected || !IsOnlineSimulationHost)
             return;
         var snapshot = BuildOnlineSnapshot();
-        var sequence = Interlocked.Increment(ref _onlineClientSequence);
-        _ = ObserveOnlineSendAsync(_onlineClient.SendAsync("game.snapshot", new
+        var startSender = false;
+        lock (_onlineSnapshotSendGate)
         {
-            clientSequence = sequence,
-            authorityEpoch = _onlineLobby?.AuthorityEpoch ?? _onlineAuthorityRevision,
-            payload = snapshot
-        }));
+            var dispatch = new OnlineSnapshotDispatch(
+                snapshot,
+                _onlineLobby?.AuthorityEpoch ?? _onlineAuthorityRevision,
+                _onlineSnapshotSendLifetime.Token);
+            // A congested connection only needs the newest world state. Replacing
+            // the one waiting behind the active send prevents an ever-growing
+            // queue of checkpoints which are already obsolete when delivered.
+            _onlineQueuedSnapshotDispatch = dispatch;
+            if (!_onlineSnapshotSendActive)
+            {
+                _onlineSnapshotSendActive = true;
+                startSender = true;
+            }
+        }
+        if (startSender) _ = FlushOnlineSnapshotsAsync();
+    }
+
+    private async Task FlushOnlineSnapshotsAsync()
+    {
+        while (true)
+        {
+            OnlineSnapshotDispatch? dispatch;
+            lock (_onlineSnapshotSendGate)
+            {
+                dispatch = _onlineQueuedSnapshotDispatch;
+                _onlineQueuedSnapshotDispatch = null;
+                if (dispatch is null)
+                {
+                    _onlineSnapshotSendActive = false;
+                    return;
+                }
+            }
+
+            if (!_onlineClient.IsConnected ||
+                !IsOnlineSimulationHost ||
+                dispatch.Snapshot.Seed != _onlineRunSeed ||
+                dispatch.Snapshot.HostPlayerId != _onlinePlayerId ||
+                dispatch.AuthorityEpoch !=
+                (_onlineLobby?.AuthorityEpoch ?? _onlineAuthorityRevision))
+                continue;
+            var sequence = Interlocked.Increment(ref _onlineClientSequence);
+            try
+            {
+                using var sendTimeout =
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        dispatch.SendCancellation);
+                sendTimeout.CancelAfter(OnlineSnapshotSendTimeout);
+                await _onlineClient.SendAsync("game.snapshot", new
+                {
+                    clientSequence = sequence,
+                    authorityEpoch = dispatch.AuthorityEpoch,
+                    payload = dispatch.Snapshot
+                }, cancellationToken: sendTimeout.Token);
+            }
+            catch
+            {
+                // ConnectionClosed owns reconnect UX. If another checkpoint was
+                // queued while this send was blocked, the loop still discards
+                // stale state and tries only that newest checkpoint.
+            }
+        }
+    }
+
+    private void RenewOnlineSnapshotSendLifetime()
+    {
+        CancellationTokenSource previous;
+        lock (_onlineSnapshotSendGate)
+        {
+            previous = _onlineSnapshotSendLifetime;
+            _onlineSnapshotSendLifetime = new CancellationTokenSource();
+            _onlineQueuedSnapshotDispatch = null;
+        }
+
+        try
+        {
+            previous.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // A shutdown path already retired the previous run generation.
+        }
+        previous.Dispose();
     }
 
     private static async Task ObserveOnlineSendAsync(Task send)
@@ -811,36 +987,53 @@ internal sealed partial class GameForm
 
         var circuitSwitch = _circuitSwitches
             .Where(item => !item.Activated && CanOnlineInteract(player.Cell, item.Cell))
-            .OrderBy(item => Manhattan(player.Cell, item.Cell))
+            .OrderByDescending(item =>
+                IsObjectiveAssignedToPlayer(item.AssignedPlayerId, player.PlayerId))
+            .ThenBy(item => Manhattan(player.Cell, item.Cell))
             .ThenBy(item => item.Number)
             .FirstOrDefault();
         if (circuitSwitch is not null)
         {
-            circuitSwitch.Activated = true;
-            return;
+            if (IsObjectiveAssignedToPlayer(
+                    circuitSwitch.AssignedPlayerId, player.PlayerId))
+            {
+                circuitSwitch.Activated = true;
+                return;
+            }
         }
 
         if (TryInteractOnlineSurvivor(player)) return;
-        if (_shopKiosk is not null && _shopKiosk.Cell == player.Cell)
+        if (_shopKiosk is not null &&
+            CanOnlineInteract(player.Cell, _shopKiosk.Cell))
         {
             player.InShop = true;
             return;
         }
+        if (TryActivateOnlineFieldDirective(player)) return;
 
         var cargo = _cargoItems
             .Where(item => !item.Carried && item.CarrierPlayerId is null &&
                            !item.Delivered && item.Required &&
                            CanOnlineInteract(player.Cell, item.Cell))
-            .OrderBy(item => Manhattan(player.Cell, item.Cell))
+            .OrderByDescending(item =>
+                IsObjectiveAssignedToPlayer(item.AssignedPlayerId, player.PlayerId))
+            .ThenBy(item => Manhattan(player.Cell, item.Cell))
             .ThenBy(item => item.Code, StringComparer.Ordinal)
             .FirstOrDefault();
         if (cargo is null) return;
+        if (!IsObjectiveAssignedToPlayer(cargo.AssignedPlayerId, player.PlayerId))
+            return;
         cargo.CarrierPlayerId = player.PlayerId;
     }
 
     private bool TryInteractOnlineSurvivor(OnlineRemotePlayer player)
     {
         if (_survivorObjective is not { } objective) return false;
+        if (!IsObjectiveAssignedToPlayer(
+                objective.AssignedPlayerId, player.PlayerId) &&
+            (CanOnlineInteract(player.Cell, objective.WorkerCell) ||
+             CanOnlineInteract(player.Cell, objective.RequesterCell)))
+            return false;
         if (CanOnlineInteract(player.Cell, objective.WorkerCell) &&
             objective.Stage is SurvivorObjectiveStage.Uncontacted or SurvivorObjectiveStage.Searching)
         {
@@ -1147,7 +1340,9 @@ internal sealed partial class GameForm
     {
         var elapsed = _mode == ScreenMode.Won
             ? _wonTime
-            : DateTime.Now - _startedAt;
+            : _onlineRunCompletedAsCasualty
+                ? _failedTime
+                : DateTime.Now - _startedAt;
         var players = new List<OnlinePlayerSnapshot>
         {
             BuildLocalOnlinePlayerSnapshot()
@@ -1166,8 +1361,10 @@ internal sealed partial class GameForm
             RandomState = _random.State.ToString("X16", CultureInfo.InvariantCulture),
             Level = _level,
             ElapsedMilliseconds = Math.Max(0, (long)elapsed.TotalMilliseconds),
-            RunCompleted = _mode == ScreenMode.Won,
-            RunFailed = _mode == ScreenMode.Failed,
+            RunCompleted = _mode == ScreenMode.Won ||
+                           _onlineRunCompletedAsCasualty,
+            RunFailed = _mode == ScreenMode.Failed &&
+                        !_onlineRunCompletedAsCasualty,
             FieldCredits = _fieldCredits,
             Players = players.ToArray(),
             Hollows = _hollows.Select(hollow => new OnlineHollowSnapshot
@@ -1239,6 +1436,7 @@ internal sealed partial class GameForm
                 CellY = cargo.Cell.Y,
                 Carried = cargo.Carried,
                 Delivered = cargo.Delivered,
+                AssignedPlayerId = cargo.AssignedPlayerId,
                 CarrierPlayerId = cargo.CarrierPlayerId
             }).ToArray(),
             Credits = _creditPickups.Select((credit, index) => new OnlineCreditSnapshot
@@ -1265,7 +1463,15 @@ internal sealed partial class GameForm
                 new OnlineCircuitSnapshot
                 {
                     Number = circuitSwitch.Number,
-                    Activated = circuitSwitch.Activated
+                    Activated = circuitSwitch.Activated,
+                    AssignedPlayerId = circuitSwitch.AssignedPlayerId
+                }).ToArray(),
+            FieldDirectives = _fieldDirectives.Select(directive =>
+                new OnlineFieldDirectiveSnapshot
+                {
+                    Id = directive.Id,
+                    AssignedPlayerId = directive.AssignedPlayerId,
+                    ActivatedMask = directive.ActivatedMask
                 }).ToArray(),
             RevealedRoomIds = _revealedRoomIds.OrderBy(id => id).ToArray(),
             Doors = _roomDoorOpenProgress.Select(entry => new OnlineDoorSnapshot
@@ -1274,6 +1480,7 @@ internal sealed partial class GameForm
                 Progress = entry.Value
             }).ToArray(),
             SurvivorStage = _survivorObjective is null ? -1 : (int)_survivorObjective.Stage,
+            SurvivorAssignedPlayerId = _survivorObjective?.AssignedPlayerId,
             SurvivorEscortPlayerId = _survivorObjective?.EscortPlayerId,
             ShopStock = _shopStock.Select(item => item.Stock).ToArray()
         };
@@ -1386,7 +1593,7 @@ internal sealed partial class GameForm
 
     private void ApplyOnlineSnapshot(OnlineWorldSnapshot snapshot)
     {
-        if (snapshot.ProtocolVersion != OnlineGameplayProtocolVersion ||
+        if (!IsOnlineSnapshotProtocolCompatible(snapshot) ||
             snapshot.Seed != _onlineRunSeed ||
             snapshot.WorldRevision <= _onlineWorldRevision ||
             snapshot.HostPlayerId != _onlineLobby?.HostPlayerId)
@@ -1433,6 +1640,26 @@ internal sealed partial class GameForm
             ApplyOnlineCompletion(snapshot.ElapsedMilliseconds);
         else if (snapshot.RunFailed && !_onlineFailureApplied)
             ApplyOnlineFailure();
+    }
+
+    private bool IsOnlineSnapshotProtocolCompatible(
+        OnlineWorldSnapshot snapshot)
+    {
+        if (snapshot.ProtocolVersion == OnlineGameplayProtocolVersion)
+            return true;
+        ReportOnlineProtocolMismatch(snapshot.ProtocolVersion);
+        return false;
+    }
+
+    private void ReportOnlineProtocolMismatch(int receivedVersion)
+    {
+        if (_onlineProtocolMismatchShown) return;
+        _onlineProtocolMismatchShown = true;
+        _onlineStatus =
+            $"CLIENT VERSION MISMATCH / WORLD {receivedVersion} / LOCAL {OnlineGameplayProtocolVersion}";
+        _missionNotice =
+            "ONLINE BUILD MISMATCH / EVERY PLAYER MUST USE THE SAME DUST EXE";
+        _missionNoticeTimer = 7.5f;
     }
 
     private void ApplyLocalOnlinePlayerSnapshot(OnlinePlayerSnapshot snapshot)
@@ -1616,6 +1843,8 @@ internal sealed partial class GameForm
             hollow.LookCooldown = value.LookCooldown;
             hollow.HasSight = value.HasSight;
             hollow.TargetPlayerId = value.TargetPlayerId;
+            if (!IsOnlineSimulationHost)
+                RetargetOnlineHollowPresentation(hollow);
         }
 
         if (_sentries.Count != snapshot.Sentries.Length)
@@ -1666,14 +1895,21 @@ internal sealed partial class GameForm
 
     private void ApplyOnlineObjectiveSnapshot(OnlineWorldSnapshot snapshot)
     {
+        string? localObjectiveFeedback = null;
         foreach (var value in snapshot.Cargo)
         {
             if (value.Index < 0 || value.Index >= _cargoItems.Count) continue;
             var cargo = _cargoItems[value.Index];
+            var wasCarriedByLocal = cargo.CarrierPlayerId == _onlinePlayerId;
             cargo.Cell = new Point(value.CellX, value.CellY);
             cargo.Carried = value.Carried;
             cargo.Delivered = value.Delivered;
+            cargo.AssignedPlayerId = value.AssignedPlayerId;
             cargo.CarrierPlayerId = value.CarrierPlayerId;
+            if (!wasCarriedByLocal &&
+                cargo.CarrierPlayerId == _onlinePlayerId &&
+                IsObjectiveAssignedToLocal(cargo.AssignedPlayerId))
+                localObjectiveFeedback = $"{cargo.Code} LATCHED";
         }
         var collectedCredit = false;
         foreach (var value in snapshot.Credits)
@@ -1699,7 +1935,32 @@ internal sealed partial class GameForm
         {
             var circuitSwitch = _circuitSwitches.FirstOrDefault(item =>
                 item.Number == value.Number);
-            if (circuitSwitch is not null) circuitSwitch.Activated = value.Activated;
+            if (circuitSwitch is not null)
+            {
+                var wasActivated = circuitSwitch.Activated;
+                circuitSwitch.Activated = value.Activated;
+                circuitSwitch.AssignedPlayerId = value.AssignedPlayerId;
+                if (!wasActivated && circuitSwitch.Activated &&
+                    IsObjectiveAssignedToLocal(circuitSwitch.AssignedPlayerId))
+                    localObjectiveFeedback =
+                        $"SWITCH {circuitSwitch.Number:00} CLOSED";
+            }
+        }
+        foreach (var value in snapshot.FieldDirectives)
+        {
+            var directive = _fieldDirectives.FirstOrDefault(item => item.Id == value.Id);
+            if (directive is null) continue;
+            var oldMask = directive.ActivatedMask;
+            directive.AssignedPlayerId = value.AssignedPlayerId;
+            var validMask = directive.Nodes.Count >= sizeof(int) * 8
+                ? -1
+                : (1 << directive.Nodes.Count) - 1;
+            directive.ActivatedMask = value.ActivatedMask & validMask;
+            if (oldMask != directive.ActivatedMask &&
+                IsObjectiveAssignedToLocal(directive.AssignedPlayerId))
+                localObjectiveFeedback = directive.IsComplete
+                    ? $"{FieldDirectiveName(directive.Kind)} / CONTRACT CLOSED"
+                    : $"{FieldDirectiveName(directive.Kind)} / {directive.ActivatedCount:00}/{directive.Nodes.Count:00}";
         }
         _revealedRoomIds.Clear();
         foreach (var roomId in snapshot.RevealedRoomIds) _revealedRoomIds.Add(roomId);
@@ -1708,16 +1969,34 @@ internal sealed partial class GameForm
             _roomDoorOpenProgress[door.RoomId] = Math.Clamp(door.Progress, 0, 1);
         if (_survivorObjective is not null && snapshot.SurvivorStage >= 0)
         {
+            var previousStage = _survivorObjective.Stage;
             _survivorObjective.Stage = (SurvivorObjectiveStage)Math.Clamp(
                 snapshot.SurvivorStage, 0, 3);
+            _survivorObjective.AssignedPlayerId =
+                snapshot.SurvivorAssignedPlayerId;
             _survivorObjective.EscortPlayerId = snapshot.SurvivorEscortPlayerId;
             if (_onlineLobby is { } lobby)
                 ReleaseUnavailableOnlineEscort(lobby);
+            if (previousStage != _survivorObjective.Stage &&
+                IsLocalSurvivorObjective)
+                localObjectiveFeedback = _survivorObjective.Stage switch
+                {
+                    SurvivorObjectiveStage.Searching => "PERSONNEL FILE ACCEPTED",
+                    SurvivorObjectiveStage.Escorting => "WORKER TETHERED",
+                    SurvivorObjectiveStage.Rescued => "PERSONNEL RECOVERY CLOSED",
+                    _ => localObjectiveFeedback
+                };
         }
         for (var index = 0;
              index < Math.Min(_shopStock.Count, snapshot.ShopStock.Length);
-             index++)
+            index++)
             _shopStock[index].Stock = Math.Max(0, snapshot.ShopStock[index]);
+        if (!IsOnlineSimulationHost && localObjectiveFeedback is not null)
+        {
+            _missionNotice = localObjectiveFeedback;
+            _missionNoticeTimer = 2.7f;
+            _audio.Play(AudioCue.Confirm);
+        }
     }
 
     private void SanitizeOnlineSnapshotMembership(
@@ -1752,6 +2031,8 @@ internal sealed partial class GameForm
             objective.Stage = SurvivorObjectiveStage.Searching;
             objective.EscortPlayerId = null;
         }
+        if (IsOnlineSimulationHost)
+            ReassignObjectivesFromUnavailableOwners(activePlayerIds);
     }
 
     private void EnterOnlineShopView()
@@ -1781,7 +2062,19 @@ internal sealed partial class GameForm
 
     private void ApplyOnlineCompletion(long elapsedMilliseconds)
     {
-        if (_mode == ScreenMode.Won) return;
+        if (_onlineCompletionApplied) return;
+        if (_mode == ScreenMode.Won)
+        {
+            // The authoritative host completes locally before its relayed
+            // checkpoint comes back through the shared snapshot path.
+            _onlineCompletionApplied = true;
+            return;
+        }
+        if (_onlineLocalDefeated)
+        {
+            ApplyOnlineCasualtyCompletion(elapsedMilliseconds);
+            return;
+        }
         _onlineCompletionApplied = true;
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
@@ -1795,6 +2088,30 @@ internal sealed partial class GameForm
         _audio.Play(AudioCue.MazeClear);
         FinishMission();
         RecordAchievementWin();
+        ResetHover();
+    }
+
+    private void ApplyOnlineCasualtyCompletion(long elapsedMilliseconds)
+    {
+        if (_onlineRunCompletedAsCasualty) return;
+        _onlineCompletionApplied = true;
+        _onlineRunCompletedAsCasualty = true;
+        CloseMissionDossier(playSound: false);
+        ResetMissionDossier();
+        _failedTime = TimeSpan.FromMilliseconds(
+            Math.Max(0, elapsedMilliseconds));
+        _againButton = RectangleF.Empty;
+        _menuButton = RectangleF.Empty;
+        _mode = ScreenMode.Failed;
+        _failurePending = false;
+        _pendingWin = false;
+        _invulnerability = 0;
+        _warningFlash = 0;
+        _survivorDifficultyPenaltyPending =
+            _survivorObjective is { IsResolved: false } &&
+            _activeRunSettings.DifficultyScaling;
+        RecordAchievementFailure();
+        _audio.StopMusic();
         ResetHover();
     }
 

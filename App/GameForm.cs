@@ -291,8 +291,9 @@ internal sealed partial class GameForm : Form
             Invalidate();
             return;
         }
-        UpdateHollows(deltaTime);
-        UpdateSentries(deltaTime);
+        var enemyDeltaTime = OnlineAuthoritySimulationDelta(deltaTime);
+        UpdateHollows(enemyDeltaTime);
+        UpdateSentries(enemyDeltaTime);
         UpdateMissionState(deltaTime);
         CheckHollowCollision();
         CheckOnlineRemoteHollowCollisions();
@@ -365,6 +366,8 @@ internal sealed partial class GameForm : Form
             _loadingCancellation?.Cancel();
             _loadingCancellation?.Dispose();
             _loadingCancellation = null;
+            _onlineSnapshotSendLifetime.Cancel();
+            _onlineSnapshotSendLifetime.Dispose();
             _timer.Dispose();
             _canvas.Dispose();
             _onlineClient.Dispose();

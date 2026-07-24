@@ -192,12 +192,14 @@ internal sealed partial class GameForm
             RemainingHealth * 2 < maximumHealth)
             AwardAchievement(AchievementId.ImpossibleOdds, persistImmediately: false);
 
-        var recoveredAllCargo = _cargoItems
-            .Where(item => item.Required)
+        var recoveredAllCargo = LocalRequiredCargoItems
             .All(item => item.Carried || item.CarrierPlayerId is not null || item.Delivered);
         var sweptAllCredits = _creditPickups.All(pickup => pickup.Collected);
         var liquidatedAllSalvage = _roomSalvage.All(item => item.Sold);
-        if (recoveredAllCargo && sweptAllCredits && liquidatedAllSalvage && _totalDamageSustained == 0)
+        var completedAllFieldContracts =
+            LocalFieldDirectives.All(item => item.IsComplete);
+        if (recoveredAllCargo && sweptAllCredits && liquidatedAllSalvage &&
+            completedAllFieldContracts && _totalDamageSustained == 0)
             AwardAchievement(AchievementId.Greedy, persistImmediately: false);
 
         foreach (var unlocked in _settings.RecordMazeWin())

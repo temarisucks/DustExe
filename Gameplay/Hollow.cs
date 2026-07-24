@@ -28,6 +28,16 @@ internal sealed class Hollow
     public bool HasSight { get; set; }
     public string? TargetPlayerId { get; set; }
 
+    // Guests keep a presentation-only pose separate from the authoritative
+    // simulation pose above. This lets the renderer advance smoothly between
+    // sparse host checkpoints without contaminating collision, perception, or
+    // a checkpoint used for host migration.
+    public bool PresentationReady { get; set; }
+    public PointF PresentationCell { get; set; }
+    public PointF PreviousPresentationCell { get; set; }
+    public float PresentationFacingAngle { get; set; }
+    public float PresentationSnapshotAge { get; set; }
+
     public bool IsMoving => MoveProgress < 1;
 
     public float ViewDistance => (Type switch

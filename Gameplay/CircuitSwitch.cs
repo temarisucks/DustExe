@@ -7,4 +7,5 @@ internal sealed class CircuitSwitch
     public required Point Cell { get; init; }
     public required float Phase { get; init; }
     public bool Activated { get; set; }
+    public string? AssignedPlayerId { get; set; }
 }

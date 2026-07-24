@@ -20,6 +20,7 @@ internal sealed class SurvivorObjective
     public required Point WorkerCell { get; init; }
     public required float VisualPhase { get; init; }
     public SurvivorObjectiveStage Stage { get; set; }
+    public string? AssignedPlayerId { get; set; }
     public string? EscortPlayerId { get; set; }
 
     public bool IsResolved => Stage == SurvivorObjectiveStage.Rescued;

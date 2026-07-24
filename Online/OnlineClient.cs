@@ -25,6 +25,7 @@ internal sealed class OnlineClient : IDisposable
     private readonly SemaphoreSlim _sendGate = new(1, 1);
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _lifetime;
+    private CancellationToken _connectionLifetimeToken;
     private Task? _receiveLoop;
     private int _disposed;
 
@@ -62,6 +63,7 @@ internal sealed class OnlineClient : IDisposable
 
         _socket = socket;
         _lifetime = lifetime;
+        _connectionLifetimeToken = lifetime.Token;
         Endpoint = uri;
         LastMessageUtc = DateTimeOffset.UtcNow;
         _receiveLoop = ReceiveLoopAsync(socket, lifetime.Token);
@@ -87,12 +89,20 @@ internal sealed class OnlineClient : IDisposable
         if (bytes.Length > MaximumMessageBytes)
             throw new InvalidOperationException("The online message is too large.");
 
-        await _sendGate.WaitAsync(cancellationToken);
+        using var linkedCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                _connectionLifetimeToken);
+        await _sendGate.WaitAsync(linkedCancellation.Token);
         try
         {
             if (socket.State != WebSocketState.Open)
                 throw new InvalidOperationException("The online connection closed before the message was sent.");
-            await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+            await socket.SendAsync(
+                bytes,
+                WebSocketMessageType.Text,
+                true,
+                linkedCancellation.Token);
         }
         finally
         {
@@ -105,6 +115,7 @@ internal sealed class OnlineClient : IDisposable
         var lifetime = Interlocked.Exchange(ref _lifetime, null);
         var socket = Interlocked.Exchange(ref _socket, null);
         lifetime?.Cancel();
+        _connectionLifetimeToken = default;
         if (socket is not null)
         {
             try
@@ -213,6 +224,7 @@ internal sealed class OnlineClient : IDisposable
         var lifetime = Interlocked.Exchange(ref _lifetime, null);
         lifetime?.Cancel();
         lifetime?.Dispose();
+        _connectionLifetimeToken = default;
         var socket = Interlocked.Exchange(ref _socket, null);
         socket?.Dispose();
         _sendGate.Dispose();

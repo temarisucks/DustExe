@@ -19,6 +19,7 @@ internal sealed class CargoItem
     public bool Required { get; set; }
     public bool Carried { get; set; }
     public bool Delivered { get; set; }
+    public string? AssignedPlayerId { get; set; }
     public string? CarrierPlayerId { get; set; }
     public float Phase { get; init; }
 }

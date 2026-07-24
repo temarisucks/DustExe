@@ -120,6 +120,11 @@ try {
   assert(hostStart.data.seed === guestStart.data.seed, "run seed differs by peer");
   assert(hostStart.data.runLevel === 1, "first run did not start at level 1");
   assert(guestStart.data.runLevel === hostStart.data.runLevel, "run level differs by peer");
+  assert(hostStart.data.runStartPlayers.length === 2, "run-start roster was not captured");
+  assert(
+    JSON.stringify(hostStart.data.runStartPlayers) ===
+      JSON.stringify(guestStart.data.runStartPlayers),
+    "run-start roster differs by peer");
 
   const nonHostSnapshot = await guest.request(
     "game.snapshot",
@@ -236,6 +241,10 @@ try {
   assert(
     migratedState.data.authorityEpoch === migrationCheckpoint.data.authorityEpoch,
     "migrated state and checkpoint epochs differ");
+  assert(migratedState.data.players.length === 1, "evicted host remained in active players");
+  assert(
+    migratedState.data.runStartPlayers.length === 2,
+    "host migration changed the immutable run-start roster");
 
   const hostFinished = guest.request(
     "lobby.finish",
@@ -244,6 +253,9 @@ try {
     "lobby.state");
   const completedState = await hostFinished;
   assert(completedState.data.runLevel === 3, "scaled survivor penalty did not advance twice");
+  assert(
+    completedState.data.runStartPlayers.length === 0,
+    "finished run retained its run-start roster");
 
   const secondStart = await guest.request(
     "lobby.start",

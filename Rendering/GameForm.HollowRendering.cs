@@ -8,8 +8,9 @@ internal sealed partial class GameForm
     {
         foreach (var hollow in _hollows)
         {
-            if (IsPositionConcealed(hollow.VisualCell)) continue;
-            var center = CellCenter(hollow.VisualCell);
+            var renderCell = HollowRenderCell(hollow);
+            if (IsPositionConcealed(renderCell)) continue;
+            var center = CellCenter(renderCell);
             var radius = Math.Max(14, (int)(_cellSize * .29f) - 5);
             var signal = hollow.State switch
             {
@@ -140,28 +141,31 @@ internal sealed partial class GameForm
         using var chasingFields = new GraphicsPath(FillMode.Winding);
         foreach (var hollow in _hollows)
         {
-            if (IsPositionConcealed(hollow.VisualCell)) continue;
-            var origin = CellCenter(hollow.VisualCell);
+            var renderCell = HollowRenderCell(hollow);
+            var renderFacing = HollowRenderFacing(hollow);
+            if (IsPositionConcealed(renderCell)) continue;
+            var origin = CellCenter(renderCell);
             var viewDistance = HollowViewRange(hollow, hollow.HasSight);
             var fieldOfView = HollowFieldOfView(hollow, hollow.HasSight);
             var reach = viewDistance * _cellSize;
             if (!RectangleF.Inflate(_mazeRect, reach, reach).Contains(origin)) continue;
 
-            var rayOffsets = BuildVisionRayOffsets(hollow, fieldOfView, viewDistance);
+            var rayOffsets = BuildVisionRayOffsets(
+                hollow, renderCell, renderFacing, fieldOfView, viewDistance);
             var outer = new List<PointF>(rayOffsets.Count);
             var inner = new List<PointF>(rayOffsets.Count);
             foreach (var offset in rayOffsets)
             {
-                var angle = hollow.FacingAngle + offset;
+                var angle = renderFacing + offset;
                 var distance = RaycastVisionDistance(
-                    hollow.VisualCell, angle, viewDistance, hollow.Type == HollowType.Hex);
+                    renderCell, angle, viewDistance, hollow.Type == HollowType.Hex);
                 distance = Math.Max(innerRadius, distance);
                 outer.Add(SnapToFeed(CellCenter(new PointF(
-                    hollow.VisualCell.X + MathF.Cos(angle) * distance,
-                    hollow.VisualCell.Y + MathF.Sin(angle) * distance))));
+                    renderCell.X + MathF.Cos(angle) * distance,
+                    renderCell.Y + MathF.Sin(angle) * distance))));
                 inner.Add(SnapToFeed(CellCenter(new PointF(
-                    hollow.VisualCell.X + MathF.Cos(angle) * innerRadius,
-                    hollow.VisualCell.Y + MathF.Sin(angle) * innerRadius))));
+                    renderCell.X + MathF.Cos(angle) * innerRadius,
+                    renderCell.Y + MathF.Sin(angle) * innerRadius))));
             }
 
             var field = outer.Concat(inner.AsEnumerable().Reverse()).ToArray();
@@ -182,7 +186,12 @@ internal sealed partial class GameForm
         if (chasingFields.PointCount > 0) g.FillPath(chasingExposure, chasingFields);
     }
 
-    private List<float> BuildVisionRayOffsets(Hollow hollow, float fieldOfView, float viewDistance)
+    private List<float> BuildVisionRayOffsets(
+        Hollow hollow,
+        PointF renderCell,
+        float renderFacing,
+        float fieldOfView,
+        float viewDistance)
     {
         var rayCount = hollow.Type switch
         {
@@ -198,19 +207,19 @@ internal sealed partial class GameForm
         if (_maze is not null && hollow.Type != HollowType.Hex)
         {
             const float edgeEpsilon = .0015f;
-            var minGridX = Math.Max(0, (int)MathF.Floor(hollow.VisualCell.X - viewDistance + .5f));
-            var maxGridX = Math.Min(_maze.Width, (int)MathF.Ceiling(hollow.VisualCell.X + viewDistance + .5f));
-            var minGridY = Math.Max(0, (int)MathF.Floor(hollow.VisualCell.Y - viewDistance + .5f));
-            var maxGridY = Math.Min(_maze.Height, (int)MathF.Ceiling(hollow.VisualCell.Y + viewDistance + .5f));
+            var minGridX = Math.Max(0, (int)MathF.Floor(renderCell.X - viewDistance + .5f));
+            var maxGridX = Math.Min(_maze.Width, (int)MathF.Ceiling(renderCell.X + viewDistance + .5f));
+            var minGridY = Math.Max(0, (int)MathF.Floor(renderCell.Y - viewDistance + .5f));
+            var maxGridY = Math.Min(_maze.Height, (int)MathF.Ceiling(renderCell.Y + viewDistance + .5f));
             var maximumSquared = (viewDistance + .05f) * (viewDistance + .05f);
             for (var gridX = minGridX; gridX <= maxGridX; gridX++)
             for (var gridY = minGridY; gridY <= maxGridY; gridY++)
             {
-                var dx = gridX - .5f - hollow.VisualCell.X;
-                var dy = gridY - .5f - hollow.VisualCell.Y;
+                var dx = gridX - .5f - renderCell.X;
+                var dy = gridY - .5f - renderCell.Y;
                 var distanceSquared = dx * dx + dy * dy;
                 if (distanceSquared < .01f || distanceSquared > maximumSquared) continue;
-                var relative = NormalizeAngle(MathF.Atan2(dy, dx) - hollow.FacingAngle);
+                var relative = NormalizeAngle(MathF.Atan2(dy, dx) - renderFacing);
                 if (Math.Abs(relative) > halfField + edgeEpsilon) continue;
                 offsets.Add(Math.Clamp(relative - edgeEpsilon, -halfField, halfField));
                 offsets.Add(Math.Clamp(relative, -halfField, halfField));

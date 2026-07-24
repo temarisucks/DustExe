@@ -132,8 +132,12 @@ internal sealed partial class GameForm
 
         DrawDossierHeader(g, sheet);
         DrawDossierCargoSection(g, new RectangleF(sheet.X + 38, sheet.Y + 92, 530, 286));
-        DrawDossierSurvivorSection(g, new RectangleF(sheet.X + 602, sheet.Y + 92,
-            sheet.Width - 638, 286));
+        var rightColumn = new RectangleF(sheet.X + 602, sheet.Y + 92,
+            sheet.Width - 638, 286);
+        DrawDossierDirectiveSection(g, new RectangleF(
+            rightColumn.X, rightColumn.Y, rightColumn.Width, 190));
+        DrawDossierSurvivorCompact(g, new RectangleF(
+            rightColumn.X, rightColumn.Y + 194, rightColumn.Width, 92));
 
         using var divider = new Pen(Color.FromArgb(93, 82, 59), 3);
         g.DrawLine(divider, sheet.X + 585, sheet.Y + 82, sheet.X + 585, sheet.Bottom - 78);
@@ -170,19 +174,30 @@ internal sealed partial class GameForm
 
     private void DrawDossierHeader(Graphics g, RectangleF sheet)
     {
-        var required = _cargoItems.Count(item => item.Required);
-        var secured = _cargoItems.Count(item =>
-            item.Required &&
+        var localCargo = LocalRequiredCargoItems.ToList();
+        var localSwitches = LocalCircuitSwitches.ToList();
+        var localDirectives = LocalFieldDirectives.ToList();
+        var required = localCargo.Count;
+        var secured = localCargo.Count(item =>
             (item.Carried || item.CarrierPlayerId is not null || item.Delivered));
         var elapsed = CurrentMissionElapsed();
         LabFont.Draw(g, "FIELD RECOVERY DOSSIER", sheet.X + 39, sheet.Y + 23, 2, C.Ink);
-        LabFont.Draw(g, $"PLATE {_level:00} / ELAPSED {(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00}",
+        var displayedCallsign = (_onlineUsername ?? "DRONE").ToUpperInvariant();
+        if (displayedCallsign.Length > 8)
+            displayedCallsign = $"{displayedCallsign[..6]}..";
+        var callsign = IsOnlineGameplayActive
+            ? $" / UNIT {displayedCallsign}"
+            : string.Empty;
+        LabFont.Draw(g, $"PLATE {_level:00}{callsign} / {(int)elapsed.TotalMinutes:00}:{elapsed.Seconds:00}",
             sheet.X + 41, sheet.Y + 56, 1, Color.FromArgb(68, 69, 57));
-        var assignmentStatus = _hasCircuitObjective
-            ? $"SW {ActivatedCircuitSwitches:00}/{RequiredCircuitSwitches:00}  CARGO {secured:00}/{required:00}"
-            : $"CARGO {secured:00}/{required:00}";
-        var assignmentComplete = secured == required && CircuitObjectiveComplete;
-        LabFont.Draw(g, assignmentStatus, sheet.Right - 94, sheet.Y + 55,
+        var assignmentStatus =
+            $"ORD {localDirectives.Count(item => item.IsComplete):00}/{localDirectives.Count:00}  " +
+            $"SW {localSwitches.Count(item => item.Activated):00}/{localSwitches.Count:00}  " +
+            $"CG {secured:00}/{required:00}";
+        var assignmentComplete = secured == required &&
+                                 localSwitches.All(item => item.Activated) &&
+                                 localDirectives.All(item => item.IsComplete);
+        LabFont.Draw(g, assignmentStatus, sheet.Right - 94, sheet.Y + 71,
             1, assignmentComplete ? Color.FromArgb(48, 78, 62) : C.Oxide,
             LabTextAlign.Right);
 
@@ -195,19 +210,26 @@ internal sealed partial class GameForm
 
     private void DrawDossierCargoSection(Graphics g, RectangleF area)
     {
-        var required = _cargoItems.Where(item => item.Required).ToList();
-        if (!_hasCircuitObjective)
+        var required = LocalRequiredCargoItems.ToList();
+        var localSwitches = LocalCircuitSwitches.ToList();
+        if (localSwitches.Count == 0)
         {
-            LabFont.Draw(g, "A / MANIFESTED MATERIAL", area.X, area.Y, 1, C.Oxide);
+            LabFont.Draw(g, "A / ASSIGNED MANIFEST", area.X, area.Y, 1, C.Oxide);
+            if (required.Count == 0)
+            {
+                LabFont.Draw(g, "NO MATERIAL OR CIRCUIT ORDER / SEE FIELD CONTRACTS",
+                    area.X + 5, area.Y + 47, 1, Color.FromArgb(72, 70, 53), tracking: 0);
+                return;
+            }
             for (var index = 0; index < required.Count; index++)
                 DrawDossierCargoRow(g, required[index], new RectangleF(
                     area.X, area.Y + 28 + index * 61, area.Width, 53), index + 1);
             return;
         }
 
-        LabFont.Draw(g, "A / MANDATORY STORAGE CIRCUIT", area.X, area.Y, 1, C.Oxide);
-        for (var index = 0; index < _circuitSwitches.Count; index++)
-            DrawDossierCircuitRow(g, _circuitSwitches[index], new RectangleF(
+        LabFont.Draw(g, "A / YOUR MANDATORY CIRCUIT ORDER", area.X, area.Y, 1, C.Oxide);
+        for (var index = 0; index < localSwitches.Count; index++)
+            DrawDossierCircuitRow(g, localSwitches[index], new RectangleF(
                 area.X, area.Y + 27 + index * 49, area.Width, 43));
 
         if (required.Count == 0)
@@ -299,6 +321,111 @@ internal sealed partial class GameForm
         return _onlinePlayers.TryGetValue(playerId, out var player)
             ? player.Username.ToUpperInvariant()
             : "TEAM UNIT";
+    }
+
+    private void DrawDossierDirectiveSection(Graphics g, RectangleF area)
+    {
+        var groups = LocalFieldDirectives
+            .GroupBy(item => item.Kind)
+            .OrderBy(group => group.Key)
+            .ToList();
+        LabFont.Draw(g, "B / PERSONAL FIELD CONTRACTS", area.X, area.Y, 1, C.Oxide);
+        if (groups.Count == 0)
+        {
+            using var emptyEdge = new Pen(Color.FromArgb(92, 79, 56), 2);
+            g.DrawRectangle(emptyEdge, area.X, area.Y + 27, area.Width, 57);
+            LabFont.Draw(g, "NO FIELD CONTRACTS", area.X + area.Width / 2,
+                area.Y + 47, 1, C.Steel, LabTextAlign.Center);
+            return;
+        }
+
+        // Reassigned orders can leave one survivor carrying several contracts.
+        // Grouping them by procedure keeps the physical file legible without
+        // hiding any progress or shrinking rows below the pixel font.
+        var rowHeight = Math.Min(40, (int)((area.Height - 27) / groups.Count));
+        for (var index = 0; index < groups.Count; index++)
+            DrawDossierDirectiveGroupRow(g, groups[index].ToList(), new RectangleF(
+                area.X, area.Y + 27 + index * rowHeight, area.Width, rowHeight));
+    }
+
+    private void DrawDossierDirectiveGroupRow(
+        Graphics g,
+        IReadOnlyList<FieldDirective> directives,
+        RectangleF row)
+    {
+        var complete = directives.All(directive => directive.IsComplete);
+        var color = complete ? Color.FromArgb(48, 78, 62) : C.Oxide;
+        using var wash = new SolidBrush(Color.FromArgb(complete ? 30 : 18, color));
+        using var edge = new Pen(Color.FromArgb(92, 79, 56), 2);
+        g.FillRectangle(wash, row);
+        g.DrawLine(edge, row.X, row.Bottom, row.Right, row.Bottom);
+
+        var check = new RectangleF(row.X + 4, row.Y + 6, 24, 24);
+        g.DrawRectangle(edge, check.X, check.Y, check.Width, check.Height);
+        if (complete)
+        {
+            using var mark = new Pen(color, 4);
+            g.DrawLine(mark, check.X + 4, check.Y + 12, check.X + 10, check.Bottom - 4);
+            g.DrawLine(mark, check.X + 10, check.Bottom - 4, check.Right - 3, check.Y + 4);
+        }
+        else
+            LabFont.Draw(g, directives.Count.ToString(), check.X + 12,
+                check.Y + 7, 1, color, LabTextAlign.Center, 0);
+
+        var kind = directives[0].Kind;
+        var shortName = kind switch
+        {
+            FieldDirectiveKind.ArchiveDecrypt => "ARCHIVE DECRYPT",
+            FieldDirectiveKind.PressurePurge => "PRESSURE PURGE",
+            FieldDirectiveKind.SignalCalibrate => "SIGNAL CAL.",
+            _ => "SPECIMEN SEAL"
+        };
+        LabFont.Draw(g, shortName, row.X + 37, row.Y + 3,
+            1, C.Ink, tracking: 0);
+        var activated = directives.Sum(directive => directive.ActivatedCount);
+        var nodes = directives.Sum(directive => directive.Nodes.Count);
+        var nextNode = directives
+            .SelectMany(directive => directive.Nodes.Select((node, index) =>
+                (directive, node, index)))
+            .FirstOrDefault(entry => !entry.directive.IsNodeActive(entry.index));
+        var location = complete
+            ? "CLOSED"
+            : nextNode.node is not null && _revealedRoomIds.Contains(nextNode.node.RoomId)
+                ? $"RM {nextNode.node.RoomId + 1:00}"
+                : "SEARCH";
+        var orderLabel = directives.Count == 1 ? "ORDER" : "ORD";
+        LabFont.Draw(g, $"{directives.Count} {orderLabel} / {activated:00}/{nodes:00} / {location}",
+            row.X + 37, row.Y + 20, 1, color, tracking: 0);
+    }
+
+    private void DrawDossierSurvivorCompact(Graphics g, RectangleF area)
+    {
+        LabFont.Draw(g, "C / PERSONNEL", area.X, area.Y, 1, C.Oxide);
+        using var edge = new Pen(Color.FromArgb(92, 79, 56), 2);
+        g.DrawRectangle(edge, area.X, area.Y + 25, area.Width, area.Height - 25);
+        if (_survivorObjective is not { } survivor || !IsLocalSurvivorObjective)
+        {
+            LabFont.Draw(g, IsOnlineGameplayActive ? "NO PERSONAL RECOVERY FILE" : "NO SUPPLEMENTAL FILE",
+                area.X + area.Width / 2, area.Y + 47, 1, C.Steel,
+                LabTextAlign.Center, 0);
+            return;
+        }
+
+        var complete = survivor.IsResolved;
+        var statusColor = complete ? Color.FromArgb(48, 78, 62) :
+            survivor.Stage == SurvivorObjectiveStage.Escorting ? C.Signal : C.Oxide;
+        var name = survivor.Stage == SurvivorObjectiveStage.Uncontacted
+            ? "IDENTITY SEALED"
+            : survivor.WorkerName.ToUpperInvariant();
+        var status = survivor.Stage switch
+        {
+            SurvivorObjectiveStage.Uncontacted => "ANSWER DISTRESS FILE",
+            SurvivorObjectiveStage.Searching => "MISSING / FIND WORKER",
+            SurvivorObjectiveStage.Escorting => $"RETURN / ROOM {survivor.RequesterRoomId + 1:00}",
+            _ => "RETURNED / SAFE"
+        };
+        LabFont.Draw(g, name, area.X + 12, area.Y + 36, 1, C.Ink, tracking: 0);
+        LabFont.Draw(g, status, area.X + 12, area.Y + 59, 1, statusColor, tracking: 0);
     }
 
     private void DrawDossierSurvivorSection(Graphics g, RectangleF area)

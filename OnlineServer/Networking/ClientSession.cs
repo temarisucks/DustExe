@@ -11,17 +11,31 @@ namespace Dust.OnlineServer.Networking;
 
 internal sealed class ClientSession
 {
+    private const int MaximumQueuedFrames = 256;
+    private const int MaximumQueuedBytes = 2 * 1024 * 1024;
+
     private readonly WebSocket _socket;
     private readonly ConnectionHub _connections;
     private readonly AccountStore _accounts;
     private readonly LobbyManager _lobbies;
     private readonly ILogger<ClientSession> _logger;
-    private readonly SemaphoreSlim _sendGate = new(1, 1);
+    private readonly object _outboundGate = new();
+    private readonly LinkedList<OutboundFrame> _outboundFrames = [];
+    private readonly CancellationTokenSource _outboundLifetime = new();
     private readonly TokenBucket _inputLimiter;
     private readonly TokenBucket _snapshotLimiter;
     private readonly int _maxMessageBytes;
     private readonly TimeSpan _sendTimeout;
     private readonly Queue<long> _authAttempts = [];
+    private LinkedListNode<OutboundFrame>? _pendingSnapshotFrame;
+    private Task? _outboundPump;
+    private int _queuedBytes;
+    private bool _outboundPumpActive;
+    private bool _outboundStopped;
+
+    private sealed record OutboundFrame(
+        ReadOnlyMemory<byte> Bytes,
+        bool ReplaceableSnapshot);
 
     public ClientSession(
         WebSocket socket,
@@ -85,68 +99,194 @@ internal sealed class ClientSession
             if (Identity is not null)
                 await _lobbies.OnConnectionLostAsync(Identity.PlayerId, this);
 
+            var outboundPump = StopOutboundQueue();
+            if (outboundPump is not null)
+            {
+                try
+                {
+                    await outboundPump;
+                }
+                catch
+                {
+                    // The receive loop still owns final socket cleanup.
+                }
+            }
             await CloseSocketQuietlyAsync();
-            _sendGate.Dispose();
+            _outboundLifetime.Dispose();
         }
     }
 
-    public async Task SendAsync(
+    public Task SendAsync(
         string type,
         string? requestId,
         object? data,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool replacePendingSnapshot = false)
     {
+        if (cancellationToken.IsCancellationRequested)
+            return Task.CompletedTask;
         var bytes = JsonSerializer.SerializeToUtf8Bytes(
             new { type, requestId, data },
             ProtocolJson.Options);
+        EnqueueOutbound(bytes, replacePendingSnapshot);
+        return Task.CompletedTask;
+    }
 
-        try
+    private void EnqueueOutbound(
+        ReadOnlyMemory<byte> bytes,
+        bool replacePendingSnapshot)
+    {
+        var abortSlowPeer = false;
+        lock (_outboundGate)
         {
-            using var sendCancellation =
-                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            sendCancellation.CancelAfter(_sendTimeout);
-            await _sendGate.WaitAsync(sendCancellation.Token);
+            if (_outboundStopped) return;
+
+            var pendingSnapshot = _pendingSnapshotFrame;
+            var replacesExisting = replacePendingSnapshot &&
+                                   pendingSnapshot is not null;
+            var replacedBytes = replacesExisting
+                ? pendingSnapshot!.Value.Bytes.Length
+                : 0;
+            var resultingCount = _outboundFrames.Count +
+                                 (replacesExisting ? 0 : 1);
+            var resultingBytes = _queuedBytes - replacedBytes + bytes.Length;
+            if (resultingCount > MaximumQueuedFrames ||
+                resultingBytes > MaximumQueuedBytes)
+            {
+                abortSlowPeer = true;
+                StopOutboundQueueLocked();
+            }
+            else
+            {
+                if (_pendingSnapshotFrame is not null &&
+                    replacePendingSnapshot)
+                {
+                    _queuedBytes -=
+                        _pendingSnapshotFrame.Value.Bytes.Length;
+                    _outboundFrames.Remove(_pendingSnapshotFrame);
+                    _pendingSnapshotFrame = null;
+                }
+
+                var frame = new OutboundFrame(bytes, replacePendingSnapshot);
+                var node = _outboundFrames.AddLast(frame);
+                _queuedBytes += bytes.Length;
+                if (replacePendingSnapshot)
+                    _pendingSnapshotFrame = node;
+                if (!_outboundPumpActive)
+                {
+                    _outboundPumpActive = true;
+                    _outboundPump = FlushOutboundAsync();
+                }
+            }
+        }
+
+        if (!abortSlowPeer) return;
+        _logger.LogWarning(
+            "Disconnecting slow WebSocket {ConnectionId}: its bounded outbound queue filled.",
+            ConnectionId);
+        AbortSocket();
+    }
+
+    private async Task FlushOutboundAsync()
+    {
+        // EnqueueOutbound starts the pump while holding _outboundGate. Yield once
+        // so the task can be stored before it attempts to take the same lock.
+        await Task.Yield();
+        while (true)
+        {
+            OutboundFrame frame;
+            lock (_outboundGate)
+            {
+                if (_outboundStopped || _outboundFrames.First is null)
+                {
+                    _outboundPumpActive = false;
+                    _outboundPump = null;
+                    return;
+                }
+
+                var node = _outboundFrames.First;
+                frame = node.Value;
+                _outboundFrames.RemoveFirst();
+                _queuedBytes -= frame.Bytes.Length;
+                if (ReferenceEquals(node, _pendingSnapshotFrame))
+                    _pendingSnapshotFrame = null;
+            }
+
             try
             {
+                using var sendCancellation =
+                    CancellationTokenSource.CreateLinkedTokenSource(
+                        _outboundLifetime.Token);
+                sendCancellation.CancelAfter(_sendTimeout);
                 if (_socket.State != WebSocketState.Open)
+                {
+                    _ = StopOutboundQueue();
                     return;
+                }
                 await _socket.SendAsync(
-                    bytes,
+                    frame.Bytes,
                     WebSocketMessageType.Text,
                     endOfMessage: true,
                     sendCancellation.Token);
             }
-            finally
+            catch (OperationCanceledException)
+                when (!_outboundLifetime.IsCancellationRequested)
             {
-                _sendGate.Release();
+                _logger.LogWarning(
+                    "Disconnecting slow WebSocket {ConnectionId} after a {TimeoutSeconds}s send timeout.",
+                    ConnectionId,
+                    _sendTimeout.TotalSeconds);
+                _ = StopOutboundQueue();
+                AbortSocket();
+                return;
             }
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            _logger.LogWarning(
-                "Disconnecting slow WebSocket {ConnectionId} after a {TimeoutSeconds}s send timeout.",
-                ConnectionId,
-                _sendTimeout.TotalSeconds);
-            try
+            catch (OperationCanceledException)
             {
-                _socket.Abort();
+                return;
+            }
+            catch (WebSocketException)
+            {
+                _ = StopOutboundQueue();
+                return;
             }
             catch (ObjectDisposedException)
             {
-                // The receive loop already completed cleanup.
+                _ = StopOutboundQueue();
+                return;
             }
         }
-        catch (OperationCanceledException)
+    }
+
+    private Task? StopOutboundQueue()
+    {
+        Task? pump;
+        lock (_outboundGate)
         {
-            // A mutation must not be rolled back just because a recipient closed.
+            pump = _outboundPump;
+            StopOutboundQueueLocked();
         }
-        catch (WebSocketException)
+        return pump;
+    }
+
+    private void StopOutboundQueueLocked()
+    {
+        if (_outboundStopped) return;
+        _outboundStopped = true;
+        _pendingSnapshotFrame = null;
+        _outboundFrames.Clear();
+        _queuedBytes = 0;
+        _outboundLifetime.Cancel();
+    }
+
+    private void AbortSocket()
+    {
+        try
         {
-            // The receive loop owns connection cleanup and grace handling.
+            _socket.Abort();
         }
         catch (ObjectDisposedException)
         {
-            // A queued broadcast raced final connection cleanup.
+            // The receive loop already completed cleanup.
         }
     }
 

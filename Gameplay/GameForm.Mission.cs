@@ -46,6 +46,7 @@ internal sealed partial class GameForm
         _creditPickups.Clear();
         _roomDoorOpenProgress.Clear();
         _circuitSwitches.Clear();
+        _fieldDirectives.Clear();
         _hasCircuitObjective = false;
         _revealedRoomIds.Clear();
         _resultLines.Clear();
@@ -54,6 +55,8 @@ internal sealed partial class GameForm
         _cargoDelivered = 0;
         _cargoRequired = 0;
         _circuitPay = 0;
+        _directivePay = 0;
+        _directiveDock = 0;
         _creditsBeforeJob = _settings.TotalCredits;
         _missionNotice = "LOCATE MANIFEST CARGO";
         _missionNoticeTimer = 3.2f;
@@ -121,9 +124,11 @@ internal sealed partial class GameForm
         }
         SetupCargoRoomContents();
         SetupSurvivorObjective();
+        SetupFieldDirectives();
+        AssignMissionObjectiveOwners();
         _missionNotice = _hasCircuitObjective
-            ? $"MANDATORY / RESTORE STORAGE CIRCUIT 00/{RequiredCircuitSwitches:00}"
-            : "LOCATE MANIFEST CARGO";
+            ? $"NEW ORDERS / CIRCUIT + {LocalDirectiveCount:00} FIELD CONTRACTS"
+            : $"NEW ORDERS / CARGO + {LocalDirectiveCount:00} FIELD CONTRACTS";
     }
 
     private Point RandomCorridorCell()
@@ -236,10 +241,12 @@ internal sealed partial class GameForm
         if (TryActivateCircuitSwitch()) return;
         if (TryInteractSurvivor()) return;
         if (TryOpenShopAtPlayer()) return;
+        if (TryActivateFieldDirective()) return;
         var item = FindCargoInLatchRange();
         if (item is null)
         {
-            _missionNotice = "NO CARGO IN LATCH RANGE";
+            _missionNotice = TeammateObjectivePrompt() ??
+                             "NO CARGO IN LATCH RANGE";
             _missionNoticeTimer = 1.4f;
             _audio.Play(AudioCue.Select);
             return;
@@ -248,6 +255,13 @@ internal sealed partial class GameForm
         {
             _missionNotice = $"{item.Code} NOT MANIFESTED";
             _missionNoticeTimer = 2.1f;
+            _audio.Play(AudioCue.Select);
+            return;
+        }
+        if (!IsObjectiveAssignedToLocal(item.AssignedPlayerId))
+        {
+            _missionNotice = $"{item.Code} RESERVED / {ObjectiveOwnerName(item.AssignedPlayerId)}";
+            _missionNoticeTimer = 2.4f;
             _audio.Play(AudioCue.Select);
             return;
         }
@@ -268,7 +282,8 @@ internal sealed partial class GameForm
         return _cargoItems
             .Where(item => !item.Carried && item.CarrierPlayerId is null &&
                            !item.Delivered && CanLatchCargoAt(item.Cell))
-            .OrderBy(item => Manhattan(_playerCell, item.Cell))
+            .OrderByDescending(item => IsObjectiveAssignedToLocal(item.AssignedPlayerId))
+            .ThenBy(item => Manhattan(_playerCell, item.Cell))
             .ThenByDescending(item => item.Required)
             .ThenBy(item => item.Code, StringComparer.Ordinal)
             .FirstOrDefault();
@@ -309,12 +324,16 @@ internal sealed partial class GameForm
 
     private void FinishMission()
     {
-        _cargoDelivered = _cargoItems.Count(item =>
-            item.Required && (item.Carried || item.CarrierPlayerId is not null ||
-                              item.Delivered));
+        var localCargo = LocalRequiredCargoItems.ToList();
+        var localSwitches = LocalCircuitSwitches.ToList();
+        var localDirectives = LocalFieldDirectives.ToList();
+        var localCargoRequired = localCargo.Count;
+        _cargoDelivered = localCargo.Count(item =>
+            item.Carried || item.CarrierPlayerId is not null || item.Delivered);
         foreach (var item in _cargoItems.Where(item =>
-                     item.Required && (item.Carried || item.CarrierPlayerId is not null ||
-                                       item.Delivered)))
+                     item.Required && IsObjectiveAssignedToLocal(item.AssignedPlayerId) &&
+                     (item.Carried || item.CarrierPlayerId is not null ||
+                      item.Delivered)))
         {
             item.Carried = false;
             item.CarrierPlayerId = null;
@@ -325,17 +344,27 @@ internal sealed partial class GameForm
         _basePay = 260 + _level * 40;
         _timePay = Math.Max(0, (210 + _level * 18 - seconds) * 3);
         _cargoPay = _cargoDelivered * 240;
-        _circuitPay = _hasCircuitObjective && CircuitObjectiveComplete ? 480 : 0;
-        var allAssignedObjectivesComplete = _cargoDelivered == _cargoRequired && CircuitObjectiveComplete &&
-                                            (_cargoRequired > 0 || _hasCircuitObjective);
+        _circuitPay = localSwitches.Count(item => item.Activated) * 240;
+        var completedDirectives = localDirectives.Count(item => item.IsComplete);
+        _directivePay = completedDirectives * 260;
+        _directiveDock = Math.Max(0, localDirectives.Count - completedDirectives) * 130;
+        var localCircuitComplete = localSwitches.All(item => item.Activated);
+        var allAssignedObjectivesComplete =
+            _cargoDelivered == localCargoRequired &&
+            localCircuitComplete &&
+            completedDirectives == localDirectives.Count &&
+            (localCargoRequired > 0 || localSwitches.Count > 0 || localDirectives.Count > 0);
         _allCargoPay = allAssignedObjectivesComplete ? 320 + _level * 35 : 0;
-        _missingCargoDock = Math.Max(0, _cargoRequired - _cargoDelivered) * 220;
+        _missingCargoDock = Math.Max(0, localCargoRequired - _cargoDelivered) * 220;
         _breachDock = _totalDamageSustained * 45;
-        _jobPay = Math.Max(25, _basePay + _timePay + _cargoPay + _circuitPay + _allCargoPay + _fieldCredits -
-                                   _missingCargoDock - _breachDock);
+        _jobPay = Math.Max(25,
+            _basePay + _timePay + _cargoPay + _circuitPay + _directivePay +
+            _allCargoPay + _fieldCredits -
+            _missingCargoDock - _directiveDock - _breachDock);
         _settings.AwardCredits(_jobPay);
 
         var survivorAbandoned = _survivorObjective is { IsResolved: false };
+        var localSurvivorAbandoned = survivorAbandoned && IsLocalSurvivorObjective;
         _survivorDifficultyPenaltyPending = survivorAbandoned && _activeRunSettings.DifficultyScaling;
 
         _resultLines.Clear();
@@ -344,18 +373,18 @@ internal sealed partial class GameForm
         _resultLines.Add("PLATE 31 / CYCLE RECORD");
         _resultLines.Add("TRANSFER COMPLETE");
         _resultLines.Add($"CYCLE {_wonTime.Minutes:00}:{_wonTime.Seconds:00}  RESP {_steps:000}");
-        _resultLines.Add(_hasCircuitObjective
-            ? $"CIRCUIT {ActivatedCircuitSwitches:00}/{RequiredCircuitSwitches:00}  CARGO {_cargoDelivered:00}/{_cargoRequired:00}"
-            : $"CARGO {_cargoDelivered:00}/{_cargoRequired:00}  {(_cargoDelivered == _cargoRequired ? "FULL" : "SHORT")}");
+        _resultLines.Add(
+            $"ORDERS {completedDirectives:00}/{localDirectives.Count:00}  CARGO {_cargoDelivered:00}/{localCargoRequired:00}  SW {localSwitches.Count(item => item.Activated):00}/{localSwitches.Count:00}");
         _resultLines.Add($"FIELD CREDIT  +{_fieldCredits:0000}");
         _resultLines.Add($"TIME RATE     +{_timePay:0000}");
-        _resultLines.Add($"OBJECTIVE RATE +{_cargoPay + _circuitPay + _allCargoPay:0000}");
+        _resultLines.Add($"OBJECTIVE RATE +{_cargoPay + _circuitPay + _directivePay + _allCargoPay:0000}");
         _resultLines.Add($"BREACH DOCK   -{_breachDock:0000}");
         _resultLines.Add($"MISSING DOCK  -{_missingCargoDock:0000}");
-        if (_survivorObjective is { } survivor)
+        _resultLines.Add($"CONTRACT DOCK -{_directiveDock:0000}");
+        if (_survivorObjective is { } survivor && IsLocalSurvivorObjective)
         {
             _survivorStatusLineIndex = _resultLines.Count;
-            if (survivorAbandoned)
+            if (localSurvivorAbandoned)
             {
                 _survivorReportLineIndex = _survivorStatusLineIndex;
                 _resultLines.Add($"You left {survivor.WorkerName} to die.");

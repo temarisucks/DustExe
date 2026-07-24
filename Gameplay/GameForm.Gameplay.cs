@@ -167,14 +167,21 @@ internal sealed partial class GameForm
         _audio.Play(AudioCue.Move);
         if (_playerCell == _exitCell)
         {
-            _pendingWin = CircuitObjectiveComplete &&
+            var transferReady = CircuitObjectiveComplete;
+            _pendingWin = transferReady &&
                           (!IsOnlineGameplayActive || IsOnlineSimulationHost);
-            if (!_pendingWin) NotifyCircuitTransferLock();
+            if (!transferReady) NotifyCircuitTransferLock();
         }
     }
 
     private void CompleteWin()
     {
+        if (IsOnlineGameplayActive && _onlineLocalDefeated)
+        {
+            ApplyOnlineCasualtyCompletion(
+                Math.Max(0, (long)(DateTime.Now - _startedAt).TotalMilliseconds));
+            return;
+        }
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _wonTime = DateTime.Now - _startedAt;

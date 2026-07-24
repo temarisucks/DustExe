@@ -38,6 +38,11 @@ internal sealed record OnlineLobbyPlayer(
     int JoinOrder,
     bool Connected);
 
+internal sealed record OnlineRunPlayer(
+    string PlayerId,
+    string Username,
+    int JoinOrder);
+
 internal sealed record OnlineLobbySummary(
     string LobbyId,
     string Name,
@@ -57,7 +62,10 @@ internal sealed record OnlineLobbyState(
     int RunLevel,
     OnlineLobbySettings Settings,
     IReadOnlyList<OnlineLobbyPlayer> Players,
-    long? Seed = null);
+    long? Seed = null)
+{
+    public IReadOnlyList<OnlineRunPlayer> RunStartPlayers { get; init; } = [];
+}
 
 internal sealed class OnlineRemotePlayer
 {
@@ -112,7 +120,7 @@ internal readonly record struct OnlineMoveIntent(long Sequence, Direction Direct
 
 internal sealed class OnlineWorldSnapshot
 {
-    public int ProtocolVersion { get; set; } = 1;
+    public int ProtocolVersion { get; set; } = 2;
     public long Tick { get; set; }
     public long WorldRevision { get; set; }
     public long AuthorityRevision { get; set; }
@@ -132,9 +140,11 @@ internal sealed class OnlineWorldSnapshot
     public OnlineCreditSnapshot[] Credits { get; set; } = [];
     public OnlineSalvageSnapshot[] Salvage { get; set; } = [];
     public OnlineCircuitSnapshot[] CircuitSwitches { get; set; } = [];
+    public OnlineFieldDirectiveSnapshot[] FieldDirectives { get; set; } = [];
     public int[] RevealedRoomIds { get; set; } = [];
     public OnlineDoorSnapshot[] Doors { get; set; } = [];
     public int SurvivorStage { get; set; } = -1;
+    public string? SurvivorAssignedPlayerId { get; set; }
     public string? SurvivorEscortPlayerId { get; set; }
     public int[] ShopStock { get; set; } = [];
 }
@@ -255,6 +265,7 @@ internal sealed class OnlineCargoSnapshot
     public int CellY { get; set; }
     public bool Carried { get; set; }
     public bool Delivered { get; set; }
+    public string? AssignedPlayerId { get; set; }
     public string? CarrierPlayerId { get; set; }
 }
 
@@ -283,6 +294,14 @@ internal sealed class OnlineCircuitSnapshot
 {
     public int Number { get; set; }
     public bool Activated { get; set; }
+    public string? AssignedPlayerId { get; set; }
+}
+
+internal sealed class OnlineFieldDirectiveSnapshot
+{
+    public int Id { get; set; }
+    public string? AssignedPlayerId { get; set; }
+    public int ActivatedMask { get; set; }
 }
 
 internal sealed class OnlineDoorSnapshot

@@ -23,6 +23,7 @@ internal sealed class Lobby
     public long AuthorityEpoch { get; set; }
     public CachedSnapshot? LatestSnapshot { get; set; }
     public List<LobbyMember> Members { get; } = [];
+    public List<LobbyRunPlayer> RunStartPlayers { get; } = [];
     public SemaphoreSlim RelayGate { get; } = new(1, 1);
 }
 
@@ -36,6 +37,11 @@ internal sealed class LobbyMember
     public long LastInputClientSequence { get; set; } = -1;
     public long LastSnapshotClientSequence { get; set; } = -1;
 }
+
+internal sealed record LobbyRunPlayer(
+    Guid PlayerId,
+    string Username,
+    int JoinOrder);
 
 internal sealed record CachedSnapshot(
     Guid SenderPlayerId,

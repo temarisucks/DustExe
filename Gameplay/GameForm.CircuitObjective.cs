@@ -55,7 +55,8 @@ internal sealed partial class GameForm
         ? null
         : _circuitSwitches
             .Where(item => !item.Activated && CanInteractWithMissionCell(item.Cell))
-            .OrderBy(item => Manhattan(_playerCell, item.Cell))
+            .OrderByDescending(item => IsObjectiveAssignedToLocal(item.AssignedPlayerId))
+            .ThenBy(item => Manhattan(_playerCell, item.Cell))
             .ThenBy(item => item.Number)
             .FirstOrDefault();
 
@@ -74,6 +75,8 @@ internal sealed partial class GameForm
         if (_mode != ScreenMode.Playing || _moveProgress < 1 || _hitEffect > 0) return false;
         var circuitSwitch = FindCircuitSwitchInRange();
         if (circuitSwitch is null) return false;
+        if (!IsObjectiveAssignedToLocal(circuitSwitch.AssignedPlayerId))
+            return false;
 
         circuitSwitch.Activated = true;
         var active = ActivatedCircuitSwitches;
@@ -90,7 +93,9 @@ internal sealed partial class GameForm
         var circuitSwitch = FindCircuitSwitchInRange();
         return circuitSwitch is null
             ? null
-            : $"E / FLIP STORAGE SWITCH {circuitSwitch.Number:00} / MANDATORY";
+            : IsObjectiveAssignedToLocal(circuitSwitch.AssignedPlayerId)
+                ? $"E / FLIP STORAGE SWITCH {circuitSwitch.Number:00} / MANDATORY"
+                : null;
     }
 
     private void NotifyCircuitTransferLock()

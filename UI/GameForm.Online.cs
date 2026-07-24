@@ -759,12 +759,14 @@ internal sealed partial class GameForm
         _audio.Play(AudioCue.Confirm);
         _onlineBusy = true;
         _onlineStatus = "RELEASING RUN TO LOBBY";
+        var completed = _mode == ScreenMode.Won ||
+                        _onlineRunCompletedAsCasualty;
         _ = SendOnlineQuietlyAsync(
             "lobby.finish",
             new
             {
-                completed = _mode == ScreenMode.Won,
-                difficultyPenalty = _mode == ScreenMode.Won &&
+                completed,
+                difficultyPenalty = completed &&
                                     _survivorDifficultyPenaltyPending
             },
             NextOnlineRequest("finish"));
@@ -1261,11 +1263,36 @@ internal sealed partial class GameForm
             players.AddRange(fallback.Players);
         }
 
+        var runStartPlayers = new List<OnlineRunPlayer>();
+        if (data.TryGetProperty("runStartPlayers", out var runStartPlayersNode) &&
+            runStartPlayersNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var player in runStartPlayersNode.EnumerateArray())
+            {
+                runStartPlayers.Add(new OnlineRunPlayer(
+                    ReadString(player, "playerId"),
+                    ReadString(player, "username"),
+                    ReadInt(player, "joinOrder", runStartPlayers.Count)));
+            }
+        }
+        else if (fallback is not null)
+        {
+            runStartPlayers.AddRange(fallback.RunStartPlayers);
+        }
+
         long? seed = fallback?.Seed;
         if (data.TryGetProperty("seed", out var seedNode))
             seed = seedNode.ValueKind == JsonValueKind.Number && seedNode.TryGetInt64(out var value)
                 ? value
                 : null;
+        if (seed is not null && runStartPlayers.Count == 0)
+        {
+            // Compatibility with servers which predate the immutable run roster.
+            // Capture the first in-game player list instead of allowing later
+            // disconnect state to change deterministic objective generation.
+            runStartPlayers.AddRange(players.Select(player => new OnlineRunPlayer(
+                player.PlayerId, player.Username, player.JoinOrder)));
+        }
         return new OnlineLobbyState(
             ReadString(data, "lobbyId", fallback?.LobbyId ?? string.Empty),
             ReadString(data, "name", fallback?.Name ?? "ONLINE LOBBY"),
@@ -1277,7 +1304,10 @@ internal sealed partial class GameForm
             Math.Clamp(ReadInt(data, "runLevel", fallback?.RunLevel ?? 1), 1, 1000),
             settings,
             players,
-            seed);
+            seed)
+        {
+            RunStartPlayers = runStartPlayers
+        };
     }
 
     private static OnlineLobbySettings ParseOnlineSettings(JsonElement data)

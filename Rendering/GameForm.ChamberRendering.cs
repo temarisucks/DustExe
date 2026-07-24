@@ -72,6 +72,7 @@ internal sealed partial class GameForm
         DrawRoomShrouds(g);
         DrawCargoRoomContents(g);
         DrawCircuitSwitches(g);
+        DrawFieldDirectiveNodes(g);
         DrawSurvivorObjective(g);
         DrawMissionObjects(g);
         DrawWallNetwork(g, minX, maxX, minY, maxY);
@@ -111,6 +112,16 @@ internal sealed partial class GameForm
         DrawLensFlaws(g);
         g.Restore(state);
         DrawFeedFrame(g);
+    }
+
+    private bool IsWorldCellInRenderRange(Point cell, float marginCells = 2f)
+    {
+        var center = CellCenter(cell);
+        var margin = _cellSize * marginCells;
+        return center.X >= _mazeRect.Left - margin &&
+               center.X <= _mazeRect.Right + margin &&
+               center.Y >= _mazeRect.Top - margin &&
+               center.Y <= _mazeRect.Bottom + margin;
     }
 
     private void DrawFloorModule(Graphics g, int x, int y, PointF center, float size, int openingMask)

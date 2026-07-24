@@ -6,6 +6,19 @@ port. The lobby creator is the simulation authority for that run, while the
 server retains a recent checkpoint so another player can take over if the host
 does not reconnect.
 
+Current clients use gameplay protocol version 2. It adds compact per-player
+objective ownership and progress to checkpoints, plus guest-side Hollow
+presentation smoothing. Everyone in one lobby should use the same published
+`Dust.exe`; older protocol-1 clients intentionally reject version-2 world
+checkpoints instead of applying an incomplete mission state.
+
+The relay uses a bounded outbound queue for every peer. Reliable inputs and
+control messages remain ordered, while an unsent world snapshot is replaced by
+the newest one. A connection that exceeds the queue or send deadline is closed
+instead of stalling the rest of the lobby. Run-start player records are retained
+for the duration of a plate so reconnecting or newly elected authorities rebuild
+the same personal objective topology.
+
 ## Quick local test
 
 Start the server from the source tree:
