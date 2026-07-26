@@ -257,9 +257,10 @@ internal sealed partial class GameForm
                 requirementsY + 29 + index * 27, index == 0 && requirements.Length == 1 ? 2 : 1,
                 cleared ? C.Signal : C.Oxide);
         }
-        if (definition.Activation == PerkActivation.Space)
-            LabFont.Draw(g, "ONE ACTIVE CHANNEL MAY BE FITTED", rect.X + 27,
-                rect.Y + 354, 1, C.Oxide);
+        LabFont.Draw(g, definition.Activation == PerkActivation.Space
+                ? "ONE ACTIVE CHANNEL MAY BE FITTED"
+                : "ONE PASSIVE CHANNEL MAY BE FITTED",
+            rect.X + 27, rect.Y + 354, 1, C.Oxide);
 
         _progressionToggleButton = new RectangleF(rect.X + 27, rect.Bottom - 61, rect.Width - 54, 42);
         DrawCutPanel(g, _progressionToggleButton,

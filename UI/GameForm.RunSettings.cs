@@ -42,13 +42,21 @@ internal sealed partial class GameForm
         }
         else if (e.KeyCode is Keys.W or Keys.Up || e.Shift && e.KeyCode == Keys.Tab)
         {
-            _runSettingsSelection = Wrap(_runSettingsSelection - 1, 13);
-            _audio.Play(AudioCue.Select);
+            if (e.Shift && e.KeyCode == Keys.Tab)
+            {
+                _runSettingsSelection = Wrap(_runSettingsSelection - 1, 13);
+                _audio.Play(AudioCue.Select);
+            }
+            else MoveRunSettingsVertical(-1);
         }
         else if (e.KeyCode is Keys.S or Keys.Down or Keys.Tab)
         {
-            _runSettingsSelection = Wrap(_runSettingsSelection + 1, 13);
-            _audio.Play(AudioCue.Select);
+            if (e.KeyCode == Keys.Tab)
+            {
+                _runSettingsSelection = Wrap(_runSettingsSelection + 1, 13);
+                _audio.Play(AudioCue.Select);
+            }
+            else MoveRunSettingsVertical(1);
         }
         else if (e.KeyCode is Keys.A or Keys.Left)
         {
@@ -64,6 +72,34 @@ internal sealed partial class GameForm
         }
         else return;
         ConsumeKey(e);
+    }
+
+    private void MoveRunSettingsVertical(int direction)
+    {
+        var next = direction < 0
+            ? _runSettingsSelection switch
+            {
+                1 => 0,
+                2 => 1,
+                10 => 2,
+                12 => 10,
+                >= 4 and <= 9 => _runSettingsSelection - 1,
+                11 => 9,
+                _ => _runSettingsSelection
+            }
+            : _runSettingsSelection switch
+            {
+                0 => 1,
+                1 => 2,
+                2 => 10,
+                10 => 12,
+                >= 3 and <= 8 => _runSettingsSelection + 1,
+                9 => 11,
+                _ => _runSettingsSelection
+            };
+        if (next == _runSettingsSelection) return;
+        _runSettingsSelection = next;
+        _audio.Play(AudioCue.Select);
     }
 
     private void AdjustRunSettingsSelection(int direction)

@@ -14,20 +14,25 @@ internal sealed partial class GameForm
     {
         var now = DateTime.Now;
         var elapsed = now - _startedAt;
-        if (_missionDossierOpen && _missionDossierOpenedAt != default)
+        if (!IsOnlineGameplayActive && _missionDossierOpen &&
+            _missionDossierOpenedAt != default)
             elapsed -= now - _missionDossierOpenedAt;
+        if (!IsOnlineGameplayActive && _inventoryOpen &&
+            _inventoryOpenedAt != default)
+            elapsed -= now - _inventoryOpenedAt;
         if (OfflinePauseFreezesGame && _offlinePauseOpenedAt != default)
             elapsed -= now - _offlinePauseOpenedAt;
         return elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed;
     }
 
-    private void OpenMissionDossier()
+    private void OpenMissionDossier(bool playSound = true)
     {
         if (_mode != ScreenMode.Playing || _missionDossierOpen) return;
+        CloseInventory(playSound: false);
         _missionDossierOpen = true;
         _missionDossierOpenedAt = DateTime.Now;
         ResetHover();
-        _audio.Play(AudioCue.Confirm);
+        if (playSound) _audio.Play(AudioCue.Confirm);
     }
 
     private void CloseMissionDossier(bool playSound = true)
@@ -37,7 +42,7 @@ internal sealed partial class GameForm
         var paused = _missionDossierOpenedAt == default
             ? TimeSpan.Zero
             : DateTime.Now - _missionDossierOpenedAt;
-        if (paused > TimeSpan.Zero)
+        if (!IsOnlineGameplayActive && paused > TimeSpan.Zero)
         {
             _startedAt += paused;
             // Hit-window achievements use absolute timestamps. Keep their
@@ -203,8 +208,11 @@ internal sealed partial class GameForm
             ? "TRANSFER SEALED UNTIL BOTH STORAGE SWITCHES ARE CLOSED"
             : "TRANSFER IS PERMITTED WITH SHORT CARGO / COMPENSATION WILL BE DOCKED";
         LabFont.Draw(g, transferRule, sheet.X + 40, sheet.Bottom - 54, 1, C.Ink, tracking: 0);
-        LabFont.Draw(g, "FIELD CLOCK HELD WHILE FILE IS OPEN", sheet.X + 40, sheet.Bottom - 29,
-            1, C.Oxide, tracking: 0);
+        LabFont.Draw(g,
+            IsOnlineGameplayActive
+                ? "NETWORK LIVE / FIELD CLOCK CONTINUES"
+                : "FIELD CLOCK HELD WHILE FILE IS OPEN",
+            sheet.X + 40, sheet.Bottom - 29, 1, C.Oxide, tracking: 0);
 
         // Folder pocket, string tie, and steel fastener sit over the paperwork.
         var pocketTop = folder.Bottom - 44;

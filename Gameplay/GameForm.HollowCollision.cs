@@ -72,7 +72,6 @@ internal sealed partial class GameForm
         _damageTaken += damage;
         _totalDamageSustained += damage;
         RecordHitForAchievements(causedByHollow);
-        TryConsumeShopRepairReserve();
         _damageTaken = Math.Min(_damageTaken, GetMaximumHealth());
         _failurePending = _damageTaken >= GetMaximumHealth();
         if (_failurePending) _cargoLostOnFailure = wasCarryingCargo;
@@ -106,7 +105,7 @@ internal sealed partial class GameForm
             if (IsRoomDecorationBlockingCell(cell)) continue;
             if (IsSurvivorBlockingCell(cell)) continue;
             if (_maze.GetRoomAt(cell) is not null) continue;
-            if (_hollows.Any(hollow => hollow.Cell == cell || hollow.TargetCell == cell)) continue;
+            if (_hollows.Any(hollow => HollowOccupiesCell(hollow, cell))) continue;
             if (_sentries.Any(sentry => sentry.Cell == cell)) continue;
             var openings = CountBits(_maze.GetOpeningMask(x, y));
             var distance = threatDistance[x, y] < 0 ? 999 : threatDistance[x, y];
@@ -165,8 +164,19 @@ internal sealed partial class GameForm
         var queue = new Queue<Point>();
         foreach (var hollow in _hollows)
         {
-            AddSource(hollow.Cell);
-            AddSource(hollow.TargetCell);
+            if (hollow.TriangleSplit && hollow.TriangleMembers.Count == 3)
+            {
+                foreach (var member in hollow.TriangleMembers)
+                {
+                    AddSource(member.Cell);
+                    AddSource(member.TargetCell);
+                }
+            }
+            else
+            {
+                AddSource(hollow.Cell);
+                AddSource(hollow.TargetCell);
+            }
         }
         foreach (var sentry in _sentries) AddSource(sentry.Cell);
         while (queue.Count > 0)

@@ -137,7 +137,11 @@ internal sealed partial class GameForm
         LabFont.Draw(g, condition, left.X + 13, left.Y + 38, 1,
             _hitEffect > 0 ? C.Red : C.Oxide);
         DrawHealthMonitor(g, left);
-        if (_mode == ScreenMode.Playing) DrawMissionDossierButton(g);
+        if (_mode == ScreenMode.Playing)
+        {
+            DrawMissionDossierButton(g);
+            DrawInventoryButton(g);
+        }
         DrawPerkTelemetry(g);
 
         var rightX = _mazeRect.Right - 31;
@@ -146,16 +150,18 @@ internal sealed partial class GameForm
             g.FillRectangle(tick, rightX - (((int)y / 17) % 4 == 0 ? 11 : 5), y, ((int)y / 17) % 4 == 0 ? 11 : 5, 2);
         LabFont.Draw(g, "03", rightX - 1, _mazeRect.Y + 50, 1, C.Oxide, LabTextAlign.Right);
 
-        if (_shopProtectionCharges > 0 || _shopRepairReserve > 0)
+        if (_shopProtectionCharges > 0 || _framePatchInventory > 0 ||
+            _reconstructionGelInventory > 0 || _shopProtectionArmed)
         {
-            var supplies = (_shopRepairReserve > 0 ? $"REPAIR {_shopRepairReserve:00}" : string.Empty) +
-                           (_shopRepairReserve > 0 && _shopProtectionCharges > 0 ? "  " : string.Empty) +
-                           (_shopProtectionCharges > 0 ? $"AEGIS {_shopProtectionCharges:00}" : string.Empty);
+            var supplies = $"PATCH {_framePatchInventory:00}  GEL {_reconstructionGelInventory:00}  " +
+                           (_shopProtectionArmed
+                               ? "AEGIS ARMED"
+                               : $"AEGIS {_shopProtectionCharges:00}");
             LabFont.Draw(g, supplies, _mazeRect.X + _mazeRect.Width / 2,
                 _mazeRect.Bottom - 23, 1, C.Signal, LabTextAlign.Center);
         }
         DrawMiniMap(g);
-        if (!_missionDossierOpen) DrawMissionPrompt(g);
+        if (!_missionDossierOpen && !_inventoryOpen) DrawMissionPrompt(g);
     }
 
     private void DrawFeedFrame(Graphics g)

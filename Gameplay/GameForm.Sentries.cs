@@ -338,7 +338,7 @@ internal sealed partial class GameForm
             if (IsSurvivorPlacementCell(candidate)) continue;
             if (_maze.GetRoomAt(candidate) is not null) continue;
             if (self is not null && candidate == self.PreviousCell) continue;
-            if (_hollows.Any(hollow => hollow.Cell == candidate || hollow.TargetCell == candidate)) continue;
+            if (_hollows.Any(hollow => HollowOccupiesCell(hollow, candidate))) continue;
             if (_sentries.Any(other => other != self && other.Cell == candidate)) continue;
             if (_creditPickups.Any(pickup => !pickup.Collected && pickup.Cell == candidate)) continue;
             if (_cargoItems.Any(item =>

@@ -69,6 +69,10 @@ internal static class Program
         Require(((IList)FieldObject(gameType, form, "_sentries")).Count > 0,
             "The default all-type roster did not include the Turret/Sentry.");
 
+        var maze = FieldObject(gameType, form, "_maze");
+        var mazeType = maze.GetType();
+        var directionType = assembly.GetType("Dust.Direction", true)!;
+
         var triangle = FindHollow(hollows, "Triangle");
         var triangleCell = Property<Point>(triangle, "Cell");
         SetField(gameType, form, "_playerCell", triangleCell);
@@ -76,18 +80,87 @@ internal static class Program
         Invoke(gameType, form, "UpdateHollowPerception", triangle);
         Require(Property<bool>(triangle, "TriangleSplit"),
             "Triangle did not split when it detected a player.");
-        var members = (Array)Invoke(gameType, form, "TriangleMemberPositions", triangle)!;
-        Require(members.Length == 3,
-            "A split Triangle did not expose three independently collidable members.");
-        foreach (PointF member in members)
+        var triangleMembers = ((IEnumerable)Property(
+                triangle, "TriangleMembers")).Cast<object>().ToArray();
+        Require(triangleMembers.Length == 3,
+            "A split Triangle did not create three simulated members.");
+        for (var tick = 0; tick < 28; tick++)
+            Invoke(gameType, form, "UpdateTriangleMembers", triangle, .12f);
+        var movedMemberCells = ((IEnumerable)Property(
+                triangle, "TriangleMembers")).Cast<object>()
+            .Select(member => Property<PointF>(member, "VisualCell"))
+            .ToArray();
+        Require(movedMemberCells.Distinct().Count() >= 2 &&
+                movedMemberCells.Any(member =>
+                    Math.Abs(member.X - triangleCell.X) > .5f ||
+                    Math.Abs(member.Y - triangleCell.Y) > .5f),
+            "Triangle shards remained a cosmetic orbit instead of navigating independently.");
+        Require((bool)Invoke(gameType, form, "HollowMakesContact", triangle,
+                    movedMemberCells[0], movedMemberCells[0])!,
+            "An independently moving Triangle member did not retain contact damage.");
+
+        var rooms = ((IEnumerable)Property(maze, "Rooms")).Cast<object>().ToArray();
+        var revealedRoomIds = FieldObject(gameType, form, "_revealedRoomIds");
+        var addRevealedRoom = revealedRoomIds.GetType().GetMethod("Add")!;
+        foreach (var room in rooms)
+            addRevealedRoom.Invoke(revealedRoomIds, [Property<int>(room, "Id")]);
+        var encirclementMember = ((IEnumerable)Property(
+                triangle, "TriangleMembers")).Cast<object>()
+            .OrderBy(member => Property<int>(member, "Index"))
+            .First();
+        var encircledInsideRevealedRoom = false;
+        foreach (var room in rooms)
         {
-            var dx = member.X - triangleCell.X;
-            var dy = member.Y - triangleCell.Y;
-            Require(dx * dx + dy * dy <= .091f,
-                "A split Triangle member escaped its wall-safe orbit.");
+            var roomId = Property<int>(room, "Id");
+            foreach (var target in ((IEnumerable)Property(room, "Cells")).Cast<Point>())
+            {
+                SetField(gameType, form, "_playerCell", target);
+                SetField(gameType, form, "_visualCell", new PointF(target.X, target.Y));
+                for (var directionIndex = 0; directionIndex < 8; directionIndex++)
+                {
+                    SetProperty(triangle, "TriangleOrbitAngle",
+                        directionIndex * MathF.PI / 4);
+                    var encirclement = (Point)Invoke(gameType, form,
+                        "FindTriangleEncirclementTarget", triangle,
+                        encirclementMember)!;
+                    var encirclementRoom = mazeType.GetMethod("GetRoomAt")!
+                        .Invoke(maze, [encirclement]);
+                    if (encirclementRoom is null ||
+                        Property<int>(encirclementRoom, "Id") != roomId)
+                        continue;
+                    encircledInsideRevealedRoom = true;
+                    break;
+                }
+                if (encircledInsideRevealedRoom) break;
+            }
+            if (encircledInsideRevealedRoom) break;
         }
+        Require(encircledInsideRevealedRoom,
+            "Triangle shards refused to encircle a player inside a revealed storage room.");
+        SetField(gameType, form, "_playerCell", triangleCell);
+        SetField(gameType, form, "_visualCell",
+            new PointF(triangleCell.X, triangleCell.Y));
+
+        SetProperty(triangle, "HasSight", false);
+        Invoke(gameType, form, "BeginTriangleReform", triangle);
+        for (var tick = 0; tick < 600 &&
+             Property<bool>(triangle, "TriangleSplit"); tick++)
+            Invoke(gameType, form, "UpdateTriangleMembers", triangle, .10f);
+        Require(!Property<bool>(triangle, "TriangleSplit") &&
+                ((IEnumerable)Property(triangle, "TriangleMembers"))
+                .Cast<object>().Count() == 0,
+            "Triangle members did not navigate back together and reform.");
 
         var camera = FindHollow(hollows, "Camera");
+        var cameraCell = Property<Point>(camera, "Cell");
+        bool CameraWall(string direction) => (bool)mazeType.GetMethod("HasWall")!
+            .Invoke(maze, [cameraCell.X, cameraCell.Y,
+                Enum.Parse(directionType, direction)])!;
+        Require(CameraWall("Up") && CameraWall("Right") ||
+                CameraWall("Right") && CameraWall("Down") ||
+                CameraWall("Down") && CameraWall("Left") ||
+                CameraWall("Left") && CameraWall("Up"),
+            "Camera did not spawn at a perpendicular maze-wall junction.");
         var square = FindHollow(hollows, "Square");
         var cameraVisual = Property<PointF>(camera, "VisualCell");
         var responseCell = new Point(
@@ -115,7 +188,23 @@ internal static class Program
             "A nearby Square was not empowered by a Star.");
         Require((int)Invoke(gameType, form, "HollowContactDamage", square)! == 2,
             "An empowered Square did not deal two integrity hits.");
+        SetProperty(star, "VisualCell", new PointF(40, 30));
+        Invoke(gameType, form, "UpdateEnemyEmpowerment");
+        Require(Property<bool>(square, "Empowered"),
+            "Star empowerment expired after the enemy left the Star's radius.");
 
+        SetProperty(star, "State", Enum.Parse(
+            assembly.GetType("Dust.HollowState", true)!, "Chase"));
+        SetProperty(star, "HasSight", true);
+        SetProperty(star, "TargetPlayerId", string.Empty);
+        SetField(gameType, form, "_camouflageTimer", 1f);
+        Invoke(gameType, form, "UpdateHollowPerception", star);
+        Require(Property(star, "State").ToString() == "Search" &&
+                Property<float>(star, "SearchTimer") < 0,
+            "A Star abandoned pursuit immediately after losing line of sight.");
+        SetField(gameType, form, "_camouflageTimer", 0f);
+
+        SetProperty(star, "VisualCell", new PointF(20, 20));
         var secondStar = Activator.CreateInstance(hollowType)!;
         SetProperty(secondStar, "Type", Enum.Parse(hollowKind, "Star"));
         SetProperty(secondStar, "Cell", new Point(21, 20));
@@ -132,11 +221,8 @@ internal static class Program
             "Two distinct Stars did not empower one another.");
         hollows.Remove(secondStar);
 
-        var maze = FieldObject(gameType, form, "_maze");
-        var mazeType = maze.GetType();
         var width = Property<int>(maze, "Width");
         var height = Property<int>(maze, "Height");
-        var directionType = assembly.GetType("Dust.Direction", true)!;
         var destroyed = false;
         for (var y = 0; y < height && !destroyed; y++)
         for (var x = 0; x < width && !destroyed; x++)
@@ -156,8 +242,14 @@ internal static class Program
         ArrangeEnemyPortrait(gameType, form, hollows);
         SetProperty(triangle, "TriangleSplit", false);
         SaveFrame(gameType, form, Path.Combine(outputDirectory, "triangle-intact.png"));
-        SetProperty(triangle, "TriangleSplit", true);
+        Invoke(gameType, form, "BeginTriangleSplit", triangle);
+        for (var tick = 0; tick < 12; tick++)
+            Invoke(gameType, form, "UpdateTriangleMembers", triangle, .10f);
         SaveFrame(gameType, form, Path.Combine(outputDirectory, "triangle-split.png"));
+        VerifyTriangleMemberCornerPresentation(
+            gameType, form, triangle, screenMode, lobbyStateType,
+            lobbySettings, lobbyPlayers);
+        Invoke(gameType, form, "BeginTriangleSplit", triangle);
 
         foreach (var hollow in hollows.Cast<object>())
             SetProperty(hollow, "Empowered", true);
@@ -198,8 +290,13 @@ internal static class Program
         SaveFrame(gameType, form, Path.Combine(outputDirectory, "new-enemies.png"));
 
         var snapshot = Invoke(gameType, form, "BuildOnlineSnapshot")!;
-        Require(Property<int>(snapshot, "ProtocolVersion") == 3,
-            "Expanded enemy checkpoints were not isolated behind protocol 3.");
+        Require(Property<int>(snapshot, "ProtocolVersion") == 4,
+            "Expanded enemy and inventory checkpoints were not isolated behind protocol 4.");
+        var snapshotTriangle = ((IEnumerable)Property(snapshot, "Hollows"))
+            .Cast<object>().First(value => Property<int>(value, "Type") == 3);
+        Require(((IEnumerable)Property(snapshotTriangle, "TriangleMembers"))
+                .Cast<object>().Count() == 3,
+            "The authoritative checkpoint omitted split Triangle member state.");
         Require(!string.IsNullOrEmpty((string)Property(snapshot, "DestroyedWallBits")),
             "Destroyed walls were missing from the online checkpoint.");
 
@@ -282,8 +379,55 @@ internal static class Program
             $"{worstCaseJson.Length} bytes{Environment.NewLine}" +
             $"{wallBits.Length} base64 characters for destroyed walls{Environment.NewLine}");
         Console.WriteLine(
-            "Enemy expansion QA passed: seven selectable types, Triangle split, Camera distress, " +
-            "Star empowerment, two-hit Square, compact dynamic-wall checkpoint, and rendering.");
+            "Enemy expansion QA passed: independent Triangle split/reform, junction Cameras, " +
+            "permanent Star empowerment and pursuit memory, compact dynamic-wall checkpoint, " +
+            "and rendering.");
+    }
+
+    private static void VerifyTriangleMemberCornerPresentation(
+        Type gameType,
+        Form form,
+        object triangle,
+        Type screenMode,
+        Type lobbyStateType,
+        object lobbySettings,
+        IList lobbyPlayers)
+    {
+        var activeLobby = Activator.CreateInstance(lobbyStateType,
+        [
+            "enemy-qa", "ENEMY QA", "other-host", 4, "running",
+            2L, 2L, 1, lobbySettings, lobbyPlayers, 919L
+        ])!;
+        SetField(gameType, form, "_onlineLobby", activeLobby);
+        SetField(gameType, form, "_onlinePlayerId", "qa-player");
+        SetField(gameType, form, "_onlineMatchActive", true);
+        SetField(gameType, form, "_mode", Enum.Parse(screenMode, "Playing"));
+
+        SetProperty(triangle, "PresentationReady", true);
+        SetProperty(triangle, "PresentationCell", Property<PointF>(triangle, "VisualCell"));
+        SetProperty(triangle, "PreviousPresentationCell",
+            Property<PointF>(triangle, "VisualCell"));
+        var member = ((IEnumerable)Property(triangle, "TriangleMembers"))
+            .Cast<object>()
+            .OrderBy(candidate => Property<int>(candidate, "Index"))
+            .First();
+        SetProperty(member, "PresentationReady", true);
+        SetProperty(member, "PresentationCell", new PointF(5, 4));
+        SetProperty(member, "PreviousPresentationCell", new PointF(5, 4));
+        SetProperty(member, "PresentationSnapshotAge", 0f);
+        SetProperty(member, "MoveFrom", new PointF(5, 5));
+        SetProperty(member, "MoveTo", new PointF(6, 5));
+        SetProperty(member, "MoveProgress", .5f);
+        SetProperty(member, "VisualCell", new PointF(5.5f, 5));
+
+        Invoke(gameType, form, "UpdateOnlineHollowPresentation", .016f);
+        var presented = Property<PointF>(member, "PresentationCell");
+        Require(Math.Abs(presented.X - 5) < .0001f && presented.Y > 4,
+            "A guest Triangle shard cut diagonally through a corridor turn.");
+
+        SetField(gameType, form, "_onlineMatchActive", false);
+        SetField(gameType, form, "_onlineLobby", null);
+        SetField(gameType, form, "_onlinePlayerId", null);
     }
 
     private static void ArrangeEnemyPortrait(Type gameType, object form, IList hollows)

@@ -7,7 +7,7 @@ namespace Dust;
 
 internal sealed partial class GameForm
 {
-    private const int OnlineGameplayProtocolVersion = 3;
+    private const int OnlineGameplayProtocolVersion = 4;
     private const float OnlineSnapshotInterval = .09f;
     private static readonly TimeSpan OnlineSnapshotSendTimeout =
         TimeSpan.FromSeconds(1.5);
@@ -104,6 +104,7 @@ internal sealed partial class GameForm
         _onlinePendingSnapshot = null;
         RenewOnlineSnapshotSendLifetime();
         _onlineLastAppliedShopRevision = 0;
+        ResetInventoryRunState();
         _onlinePlayers.Clear();
         while (_onlineGameplayInbox.TryDequeue(out _)) { }
         StartGame(preserveLevel: true);
@@ -458,8 +459,6 @@ internal sealed partial class GameForm
             frameArgb = _playerFrameColor.ToArgb(),
             maximumHealth = GetMaximumHealth(),
             accountCredits = _settings.TotalCredits,
-            shopRepairReserve = _shopRepairReserve,
-            shopProtectionCharges = _shopProtectionCharges,
             equippedPerks = perks
         });
     }
@@ -500,6 +499,34 @@ internal sealed partial class GameForm
             return true;
         }
         SendOnlineInput("perk", new { });
+        return !IsOnlineSimulationHost;
+    }
+
+    /// <returns>True when a non-host must wait for authoritative application.</returns>
+    private bool RelayOnlineInventoryUse(ShopItemKind kind)
+    {
+        if (!IsOnlineGameplayActive) return false;
+        if (_onlineLocalDefeated) return true;
+        if (!OnlineGameplayHostAvailable)
+        {
+            ShowOnlineAuthorityUnavailableNotice();
+            return true;
+        }
+        SendOnlineInput("inventoryUse", new { itemKind = (int)kind });
+        return !IsOnlineSimulationHost;
+    }
+
+    /// <returns>True when a non-host must wait for authoritative application.</returns>
+    private bool RelayOnlineDefensiveItemActivation()
+    {
+        if (!IsOnlineGameplayActive) return false;
+        if (_onlineLocalDefeated) return true;
+        if (!OnlineGameplayHostAvailable)
+        {
+            ShowOnlineAuthorityUnavailableNotice();
+            return true;
+        }
+        SendOnlineInput("defense", new { });
         return !IsOnlineSimulationHost;
     }
 
@@ -716,6 +743,13 @@ internal sealed partial class GameForm
             case "perk":
                 TryActivateOnlinePlayerPerk(player);
                 break;
+            case "inventoryUse":
+                ResolveOnlineInventoryUse(
+                    player, IntProperty(body, "itemKind", -1));
+                break;
+            case "defense":
+                ResolveOnlineDefensiveItemActivation(player);
+                break;
             case "leaveShop":
                 player.InShop = false;
                 break;
@@ -742,18 +776,20 @@ internal sealed partial class GameForm
         player.MaximumHealth = Math.Clamp(IntProperty(body, "maximumHealth", 3), 3, 5);
         player.AccountCredits = Math.Clamp(
             LongProperty(body, "accountCredits"), 0, 1_000_000_000_000L);
-        player.ShopRepairReserve = Math.Clamp(
-            IntProperty(body, "shopRepairReserve", 0), 0, 20);
-        player.ShopProtectionCharges = Math.Clamp(
-            IntProperty(body, "shopProtectionCharges", 0), 0, 20);
+        // Run supplies are host-owned state. Appearance packets may describe
+        // the airframe and unlocked loadout, but cannot mint healing stock or
+        // arrive with a free ward already armed.
         player.AppearanceReady = true;
         player.EquippedPerks.Clear();
         if (!TryProperty(body, "equippedPerks", out var perks) ||
             perks.ValueKind != JsonValueKind.Array)
             return;
-        foreach (var node in perks.EnumerateArray())
-            if (node.TryGetInt32(out var value) && Enum.IsDefined(typeof(PerkId), value))
-                player.EquippedPerks.Add((PerkId)value);
+        var requested = perks.EnumerateArray()
+            .Where(node => node.TryGetInt32(out var value) &&
+                           Enum.IsDefined(typeof(PerkId), value))
+            .Select(node => (PerkId)node.GetInt32());
+        foreach (var perk in ProgressionProfile.LimitToLoadoutSlots(requested))
+            player.EquippedPerks.Add(perk);
     }
 
     private void ResolveOnlineShopPurchase(OnlineRemotePlayer player, int stockIndex)
@@ -797,32 +833,82 @@ internal sealed partial class GameForm
         switch (item.Kind)
         {
             case ShopItemKind.FramePatch:
-                ApplyOnlinePurchasedRepair(player, 1);
+                player.FramePatchInventory = Math.Min(99,
+                    player.FramePatchInventory + 1);
                 SetOnlineShopReply(player,
-                    "One fracture closed. The authority marked the stock.",
+                    "Patch sealed for transit. Spend it when the frame fractures.",
                     AudioCue.Confirm);
                 break;
             case ShopItemKind.ReconstructionGel:
-                ApplyOnlinePurchasedRepair(player, 2);
+                player.ReconstructionGelInventory = Math.Min(99,
+                    player.ReconstructionGelInventory + 1);
                 SetOnlineShopReply(player,
-                    "The gel remembers the shape your frame forgot.",
+                    "Gel sealed for transit. It waits for your command.",
                     AudioCue.Confirm);
                 break;
             case ShopItemKind.AegisFuse:
-                player.ShopProtectionCharges++;
+                player.ShopProtectionCharges = Math.Min(99,
+                    player.ShopProtectionCharges + 1);
                 SetOnlineShopReply(player,
-                    "Ward armed. The next hit belongs to the fuse.",
+                    "Fuse transferred. Arm it before the dark reaches you.",
                     AudioCue.Confirm);
                 break;
         }
     }
 
-    private static void ApplyOnlinePurchasedRepair(
-        OnlineRemotePlayer player, int repairPoints)
+    private void ResolveOnlineInventoryUse(
+        OnlineRemotePlayer player, int kindValue)
     {
-        var applied = Math.Min(player.Damage, Math.Max(0, repairPoints));
-        player.Damage -= applied;
-        player.ShopRepairReserve += Math.Max(0, repairPoints - applied);
+        if (!player.Connected || player.Defeated || player.Extracted ||
+            player.InShop || !player.AppearanceReady ||
+            !Enum.IsDefined(typeof(ShopItemKind), kindValue))
+            return;
+        var kind = (ShopItemKind)kindValue;
+        if (kind is not (ShopItemKind.FramePatch or ShopItemKind.ReconstructionGel))
+            return;
+        var count = kind == ShopItemKind.FramePatch
+            ? player.FramePatchInventory
+            : player.ReconstructionGelInventory;
+        if (count <= 0)
+        {
+            SetOnlineShopReply(player, "INVENTORY SLOT EMPTY", AudioCue.Select);
+            return;
+        }
+        if (player.Damage <= 0)
+        {
+            SetOnlineShopReply(player, "FRAME INTEGRITY ALREADY FULL", AudioCue.Select);
+            return;
+        }
+
+        var repair = kind == ShopItemKind.ReconstructionGel ? 2 : 1;
+        if (kind == ShopItemKind.FramePatch) player.FramePatchInventory--;
+        else player.ReconstructionGelInventory--;
+        var before = player.Damage;
+        player.Damage = Math.Max(0, player.Damage - repair);
+        SetOnlineShopReply(player,
+            $"FRAME RESTORED / +{before - player.Damage:00} INTEGRITY",
+            AudioCue.Confirm);
+    }
+
+    private static void ResolveOnlineDefensiveItemActivation(
+        OnlineRemotePlayer player)
+    {
+        if (!player.Connected || player.Defeated || player.Extracted ||
+            player.InShop || !player.AppearanceReady)
+            return;
+        if (player.ShopProtectionArmed)
+        {
+            SetOnlineShopReply(player, "AEGIS WARD ALREADY ARMED", AudioCue.Select);
+            return;
+        }
+        if (player.ShopProtectionCharges <= 0)
+        {
+            SetOnlineShopReply(player, "NO AEGIS FUSE IN INVENTORY", AudioCue.Select);
+            return;
+        }
+        player.ShopProtectionCharges--;
+        player.ShopProtectionArmed = true;
+        SetOnlineShopReply(player, "AEGIS WARD ARMED / NEXT HIT NULL", AudioCue.Confirm);
     }
 
     private void ResolveOnlineShopSale(OnlineRemotePlayer player, int kindValue)
@@ -1121,9 +1207,9 @@ internal sealed partial class GameForm
     {
         if (player.Invulnerability > 0 || player.Defeated || player.InShop ||
             !player.Connected) return;
-        if (player.ShopProtectionCharges > 0)
+        if (player.ShopProtectionArmed)
         {
-            player.ShopProtectionCharges--;
+            player.ShopProtectionArmed = false;
             player.Invulnerability = 1.25f;
             player.ShopTransactionRevision++;
             player.ShopMessage = "AEGIS FUSE SPENT / DAMAGE NULL";
@@ -1135,14 +1221,6 @@ internal sealed partial class GameForm
         player.Damage += damage;
         player.TotalDamageSustained += damage;
         player.LastDamageWasHollow = causedByHollow;
-        if (player.ShopRepairReserve > 0 && player.Damage > 0)
-        {
-            player.ShopRepairReserve--;
-            player.Damage--;
-            player.ShopTransactionRevision++;
-            player.ShopMessage = "BANKED REPAIR DEPLOYED / FRAME RESTORED";
-            player.ShopCue = (int)AudioCue.Confirm;
-        }
         player.Damage = Math.Min(player.Damage, player.MaximumHealth);
         player.Invulnerability = 2.4f;
         if (player.Damage >= player.MaximumHealth)
@@ -1168,7 +1246,11 @@ internal sealed partial class GameForm
                 continue;
             if (IsRoomDecorationBlockingCell(cell) ||
                 IsSurvivorBlockingCell(cell) ||
-                _hollows.Any(hollow => Manhattan(hollow.Cell, cell) < 7) ||
+                _hollows.Any(hollow => hollow.TriangleSplit &&
+                    hollow.TriangleMembers.Count == 3
+                        ? hollow.TriangleMembers.Any(member =>
+                            Manhattan(member.Cell, cell) < 7)
+                        : Manhattan(hollow.Cell, cell) < 7) ||
                 _sentries.Any(sentry => Manhattan(sentry.Cell, cell) < 7))
                 continue;
             candidates.Add(cell);
@@ -1267,7 +1349,7 @@ internal sealed partial class GameForm
 
         if (!_onlineLocalDefeated && !IsOnlineLocalPlayerProtected &&
             !IsPlayerInvisibleToEnemies &&
-            CanHollowSeeFrom(hollow, hollow.VisualCell, _visualCell, hollow.HasSight))
+            CanHollowBodySee(hollow, _visualCell, hollow.HasSight))
         {
             bestDistance = PerkDistanceSquared(hollow.VisualCell, _visualCell);
             playerId = _onlinePlayerId ?? string.Empty;
@@ -1278,7 +1360,7 @@ internal sealed partial class GameForm
         foreach (var player in _onlinePlayers.Values)
         {
             if (!OnlinePlayerCanBeTargeted(player) || player.CamouflageTimer > 0) continue;
-            if (!CanHollowSeeFrom(hollow, hollow.VisualCell, player.VisualCell,
+            if (!CanHollowBodySee(hollow, player.VisualCell,
                     hollow.HasSight && hollow.TargetPlayerId == player.PlayerId))
                 continue;
             var distance = PerkDistanceSquared(hollow.VisualCell, player.VisualCell);
@@ -1411,6 +1493,31 @@ internal sealed partial class GameForm
                 TargetPlayerId = hollow.TargetPlayerId,
                 Empowered = hollow.Empowered,
                 TriangleSplit = hollow.TriangleSplit,
+                TriangleReforming = hollow.TriangleReforming,
+                TriangleRallyX = hollow.TriangleRallyCell.X,
+                TriangleRallyY = hollow.TriangleRallyCell.Y,
+                TriangleMembers = hollow.TriangleMembers.Select(member =>
+                    new OnlineTriangleMemberSnapshot
+                    {
+                        Index = member.Index,
+                        CellX = member.Cell.X,
+                        CellY = member.Cell.Y,
+                        TargetX = member.TargetCell.X,
+                        TargetY = member.TargetCell.Y,
+                        PreviousX = member.PreviousCell.X,
+                        PreviousY = member.PreviousCell.Y,
+                        VisualX = member.VisualCell.X,
+                        VisualY = member.VisualCell.Y,
+                        PreviousVisualX = member.PreviousVisualCell.X,
+                        PreviousVisualY = member.PreviousVisualCell.Y,
+                        MoveFromX = member.MoveFrom.X,
+                        MoveFromY = member.MoveFrom.Y,
+                        MoveToX = member.MoveTo.X,
+                        MoveToY = member.MoveTo.Y,
+                        MoveProgress = member.MoveProgress,
+                        Cooldown = member.Cooldown,
+                        FacingAngle = member.FacingAngle
+                    }).ToArray(),
                 TriangleSplitTimer = hollow.TriangleSplitTimer,
                 TriangleOrbitAngle = hollow.TriangleOrbitAngle,
                 PreviousTriangleOrbitAngle = hollow.PreviousTriangleOrbitAngle,
@@ -1558,8 +1665,10 @@ internal sealed partial class GameForm
             HollowKillerCooldown = _hollowKillerCooldown,
             LastDamageWasHollow = true,
             AccountCredits = _settings.TotalCredits,
-            ShopRepairReserve = _shopRepairReserve,
+            FramePatchInventory = _framePatchInventory,
+            ReconstructionGelInventory = _reconstructionGelInventory,
             ShopProtectionCharges = _shopProtectionCharges,
+            ShopProtectionArmed = _shopProtectionArmed,
             ShopTransactionRevision = _onlineLastAppliedShopRevision
         };
     }
@@ -1608,8 +1717,10 @@ internal sealed partial class GameForm
             HollowKillerCooldown = player.HollowKillerCooldown,
             LastDamageWasHollow = player.LastDamageWasHollow,
             AccountCredits = player.AccountCredits,
-            ShopRepairReserve = player.ShopRepairReserve,
+            FramePatchInventory = player.FramePatchInventory,
+            ReconstructionGelInventory = player.ReconstructionGelInventory,
             ShopProtectionCharges = player.ShopProtectionCharges,
+            ShopProtectionArmed = player.ShopProtectionArmed,
             ShopTransactionRevision = player.ShopTransactionRevision,
             ShopMessage = player.ShopMessage,
             ShopCue = player.ShopCue
@@ -1703,8 +1814,11 @@ internal sealed partial class GameForm
         {
             _onlineLastAppliedShopRevision = snapshot.ShopTransactionRevision;
             _settings.TotalCredits = Math.Max(0, snapshot.AccountCredits);
-            _shopRepairReserve = Math.Max(0, snapshot.ShopRepairReserve);
+            _framePatchInventory = Math.Clamp(snapshot.FramePatchInventory, 0, 99);
+            _reconstructionGelInventory = Math.Clamp(
+                snapshot.ReconstructionGelInventory, 0, 99);
             _shopProtectionCharges = Math.Max(0, snapshot.ShopProtectionCharges);
+            _shopProtectionArmed = snapshot.ShopProtectionArmed;
             if (_mode == ScreenMode.Shop && !string.IsNullOrWhiteSpace(snapshot.ShopMessage))
                 StartShopDialogue(snapshot.ShopMessage);
             else if (!string.IsNullOrWhiteSpace(snapshot.ShopMessage))
@@ -1813,17 +1927,22 @@ internal sealed partial class GameForm
         player.HollowKillerCooldown = Math.Max(0, snapshot.HollowKillerCooldown);
         player.LastDamageWasHollow = snapshot.LastDamageWasHollow;
         player.AccountCredits = Math.Max(0, snapshot.AccountCredits);
-        player.ShopRepairReserve = Math.Max(0, snapshot.ShopRepairReserve);
+        player.FramePatchInventory = Math.Clamp(snapshot.FramePatchInventory, 0, 99);
+        player.ReconstructionGelInventory = Math.Clamp(
+            snapshot.ReconstructionGelInventory, 0, 99);
         player.ShopProtectionCharges = Math.Max(0, snapshot.ShopProtectionCharges);
+        player.ShopProtectionArmed = snapshot.ShopProtectionArmed;
         player.ShopTransactionRevision = Math.Max(
             player.ShopTransactionRevision, snapshot.ShopTransactionRevision);
         player.ShopMessage = snapshot.ShopMessage;
         player.ShopCue = snapshot.ShopCue;
         player.AppearanceReady = true;
         player.EquippedPerks.Clear();
-        foreach (var value in snapshot.EquippedPerks)
-            if (Enum.IsDefined(typeof(PerkId), value))
-                player.EquippedPerks.Add((PerkId)value);
+        var loadout = snapshot.EquippedPerks
+            .Where(value => Enum.IsDefined(typeof(PerkId), value))
+            .Select(value => (PerkId)value);
+        foreach (var perk in ProgressionProfile.LimitToLoadoutSlots(loadout))
+            player.EquippedPerks.Add(perk);
     }
 
     private void ApplyOnlineEnemySnapshot(OnlineWorldSnapshot snapshot)
@@ -1870,6 +1989,48 @@ internal sealed partial class GameForm
             hollow.TargetPlayerId = value.TargetPlayerId;
             hollow.Empowered = value.Empowered;
             hollow.TriangleSplit = value.TriangleSplit;
+            hollow.TriangleReforming = value.TriangleReforming;
+            hollow.TriangleRallyCell = new Point(
+                value.TriangleRallyX, value.TriangleRallyY);
+            var previousMembers = hollow.TriangleMembers
+                .GroupBy(member => member.Index)
+                .ToDictionary(group => group.Key, group => group.First());
+            hollow.TriangleMembers.Clear();
+            foreach (var memberValue in (value.TriangleMembers ?? [])
+                         .OrderBy(member => member.Index)
+                         .Take(3))
+            {
+                var member = new TriangleMember
+                {
+                    Index = Math.Clamp(memberValue.Index, 0, 2),
+                    Cell = new Point(memberValue.CellX, memberValue.CellY),
+                    TargetCell = new Point(memberValue.TargetX, memberValue.TargetY),
+                    PreviousCell = new Point(
+                        memberValue.PreviousX, memberValue.PreviousY),
+                    VisualCell = new PointF(
+                        memberValue.VisualX, memberValue.VisualY),
+                    PreviousVisualCell = new PointF(
+                        memberValue.PreviousVisualX,
+                        memberValue.PreviousVisualY),
+                    MoveFrom = new PointF(
+                        memberValue.MoveFromX, memberValue.MoveFromY),
+                    MoveTo = new PointF(
+                        memberValue.MoveToX, memberValue.MoveToY),
+                    MoveProgress = Math.Clamp(memberValue.MoveProgress, 0, 1),
+                    Cooldown = memberValue.Cooldown,
+                    FacingAngle = memberValue.FacingAngle
+                };
+                if (previousMembers.TryGetValue(member.Index, out var previousMember))
+                {
+                    member.PresentationReady = previousMember.PresentationReady;
+                    member.PresentationCell = previousMember.PresentationCell;
+                    member.PreviousPresentationCell =
+                        previousMember.PreviousPresentationCell;
+                    member.PresentationSnapshotAge =
+                        previousMember.PresentationSnapshotAge;
+                }
+                hollow.TriangleMembers.Add(member);
+            }
             hollow.TriangleSplitTimer = Math.Max(0, value.TriangleSplitTimer);
             hollow.TriangleOrbitAngle = value.TriangleOrbitAngle;
             hollow.PreviousTriangleOrbitAngle = value.PreviousTriangleOrbitAngle;
@@ -2179,6 +2340,8 @@ internal sealed partial class GameForm
         }
         _onlineCompletionApplied = true;
         ResetPauseMenuState();
+        CloseInventory(playSound: false);
+        ResetInventoryOverlay();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _wonTime = TimeSpan.FromMilliseconds(Math.Max(0, elapsedMilliseconds));
@@ -2200,6 +2363,8 @@ internal sealed partial class GameForm
         _onlineCompletionApplied = true;
         _onlineRunCompletedAsCasualty = true;
         ResetPauseMenuState();
+        CloseInventory(playSound: false);
+        ResetInventoryOverlay();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _failedTime = TimeSpan.FromMilliseconds(
@@ -2250,4 +2415,7 @@ internal sealed partial class GameForm
         TryProperty(node, name, out var value) && value.TryGetInt32(out var result)
             ? result
             : fallback;
+
+    private static bool BoolProperty(JsonElement node, string name) =>
+        TryProperty(node, name, out var value) && value.ValueKind == JsonValueKind.True;
 }

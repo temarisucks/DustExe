@@ -9,7 +9,9 @@ internal sealed partial class GameForm
         foreach (var hollow in _hollows)
         {
             var renderCell = HollowRenderCell(hollow);
-            if (IsPositionConcealed(renderCell)) continue;
+            if (!(hollow.Type == HollowType.Triangle && hollow.TriangleSplit) &&
+                IsPositionConcealed(renderCell))
+                continue;
             var center = CellCenter(renderCell);
             var radius = Math.Max(14, (int)(_cellSize * .29f) - 5);
             var signal = hollow.Empowered
@@ -158,22 +160,13 @@ internal sealed partial class GameForm
             return;
         }
 
-        var orbitRadius = _cellSize * .30f;
-        var renderOrbit = hollow.TriangleOrbitAngle;
-        if (IsOnlineGameplayActive && !IsOnlineSimulationHost &&
-            hollow.PresentationReady)
-            renderOrbit = NormalizeAngle(
-                renderOrbit + hollow.PresentationSnapshotAge * 2.75f);
-        for (var index = 0; index < 3; index++)
+        foreach (var member in hollow.TriangleMembers.OrderBy(member => member.Index))
         {
-            var orbit = renderOrbit + index * MathF.PI * 2 / 3;
-            var member = new PointF(
-                center.X + MathF.Cos(orbit) * orbitRadius,
-                center.Y + MathF.Sin(orbit) * orbitRadius);
-            var rotation = -MathF.PI / 2 + _time * (2.1f + index * .16f) +
+            var memberCenter = CellCenter(TriangleMemberRenderCell(member));
+            var rotation = -MathF.PI / 2 + _time * (2.1f + member.Index * .16f) +
                            hollow.AnimationPhase;
             DrawHollowRing(g,
-                RegularPolygonPoints(member, 3, radius * .62f, rotation),
+                RegularPolygonPoints(memberCenter, 3, radius * .62f, rotation),
                 signal, 9, 3);
         }
     }
@@ -285,39 +278,57 @@ internal sealed partial class GameForm
         {
             var renderCell = HollowRenderCell(hollow);
             var renderFacing = HollowRenderFacing(hollow);
-            if (IsPositionConcealed(renderCell)) continue;
-            var origin = CellCenter(renderCell);
             var viewDistance = HollowViewRange(hollow, hollow.HasSight);
             var fieldOfView = HollowFieldOfView(hollow, hollow.HasSight);
             var reach = viewDistance * _cellSize;
-            if (!RectangleF.Inflate(_mazeRect, reach, reach).Contains(origin)) continue;
-
-            var rayOffsets = BuildVisionRayOffsets(
-                hollow, renderCell, renderFacing, fieldOfView, viewDistance);
-            var outer = new List<PointF>(rayOffsets.Count);
-            var inner = new List<PointF>(rayOffsets.Count);
-            foreach (var offset in rayOffsets)
+            var bodyCells = hollow.Type == HollowType.Triangle &&
+                            hollow.TriangleSplit &&
+                            hollow.TriangleMembers.Count == 3
+                ? hollow.TriangleMembers.OrderBy(member => member.Index)
+                    .Select(TriangleMemberRenderCell).ToArray()
+                : [renderCell];
+            var bodyFacings = hollow.Type == HollowType.Triangle &&
+                              hollow.TriangleSplit &&
+                              hollow.TriangleMembers.Count == 3
+                ? hollow.TriangleMembers.OrderBy(member => member.Index)
+                    .Select(member => member.FacingAngle).ToArray()
+                : [renderFacing];
+            for (var bodyIndex = 0; bodyIndex < bodyCells.Length; bodyIndex++)
             {
-                var angle = renderFacing + offset;
-                var distance = RaycastVisionDistance(
-                    renderCell, angle, viewDistance, HollowIgnoresVisionWalls(hollow));
-                distance = Math.Max(innerRadius, distance);
-                outer.Add(SnapToFeed(CellCenter(new PointF(
-                    renderCell.X + MathF.Cos(angle) * distance,
-                    renderCell.Y + MathF.Sin(angle) * distance))));
-                inner.Add(SnapToFeed(CellCenter(new PointF(
-                    renderCell.X + MathF.Cos(angle) * innerRadius,
-                    renderCell.Y + MathF.Sin(angle) * innerRadius))));
+                var bodyCell = bodyCells[bodyIndex];
+                var bodyFacing = bodyFacings[bodyIndex];
+                if (IsPositionConcealed(bodyCell)) continue;
+                var origin = CellCenter(bodyCell);
+                if (!RectangleF.Inflate(_mazeRect, reach, reach).Contains(origin))
+                    continue;
+
+                var rayOffsets = BuildVisionRayOffsets(
+                    hollow, bodyCell, bodyFacing, fieldOfView, viewDistance);
+                var outer = new List<PointF>(rayOffsets.Count);
+                var inner = new List<PointF>(rayOffsets.Count);
+                foreach (var offset in rayOffsets)
+                {
+                    var angle = bodyFacing + offset;
+                    var distance = RaycastVisionDistance(
+                        bodyCell, angle, viewDistance, HollowIgnoresVisionWalls(hollow));
+                    distance = Math.Max(innerRadius, distance);
+                    outer.Add(SnapToFeed(CellCenter(new PointF(
+                        bodyCell.X + MathF.Cos(angle) * distance,
+                        bodyCell.Y + MathF.Sin(angle) * distance))));
+                    inner.Add(SnapToFeed(CellCenter(new PointF(
+                        bodyCell.X + MathF.Cos(angle) * innerRadius,
+                        bodyCell.Y + MathF.Sin(angle) * innerRadius))));
+                }
+
+                var field = outer.Concat(inner.AsEnumerable().Reverse()).ToArray();
+                var path = hollow.State switch
+                {
+                    HollowState.Chase => chasingFields,
+                    HollowState.Search => searchingFields,
+                    _ => roamingFields
+                };
+                path.AddPolygon(field);
             }
-
-            var field = outer.Concat(inner.AsEnumerable().Reverse()).ToArray();
-            var path = hollow.State switch
-            {
-                HollowState.Chase => chasingFields,
-                HollowState.Search => searchingFields,
-                _ => roamingFields
-            };
-            path.AddPolygon(field);
         }
 
         using var roamingExposure = new SolidBrush(Color.FromArgb(20, C.Sick));

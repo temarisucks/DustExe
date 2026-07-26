@@ -19,7 +19,6 @@ internal sealed partial class GameForm
     private int _shopDialogueVisible;
     private float _shopDialogueAccumulator;
     private int _shopProtectionCharges;
-    private int _shopRepairReserve;
 
     private bool ShopDialogueReady => _shopDialogueVisible >= _shopDialogue.Length;
     private long AvailableShopCredits => _settings.TotalCredits > long.MaxValue - _fieldCredits
@@ -138,7 +137,7 @@ internal sealed partial class GameForm
         {
             Kind = ShopItemKind.FramePatch,
             Name = "FRAME PATCH",
-            Description = "Repairs 1 damage; excess banks for a later hit.",
+            Description = "A carried repair kit. Restores 1 integrity when used.",
             Price = 90,
             StartingStock = 2,
             Stock = 2
@@ -147,7 +146,7 @@ internal sealed partial class GameForm
         {
             Kind = ShopItemKind.ReconstructionGel,
             Name = "RECON GEL",
-            Description = "Repairs 2 damage; excess banks for later hits.",
+            Description = "A carried repair ampoule. Restores up to 2 integrity.",
             Price = 165,
             StartingStock = 1,
             Stock = 1
@@ -156,7 +155,7 @@ internal sealed partial class GameForm
         {
             Kind = ShopItemKind.AegisFuse,
             Name = "AEGIS FUSE",
-            Description = "A one-use ward that cancels the next damaging hit.",
+            Description = "A carried fuse. Arm it to cancel the next damaging hit.",
             Price = 145,
             StartingStock = 2,
             Stock = 2
@@ -335,12 +334,6 @@ internal sealed partial class GameForm
             ConsumeKey(e);
             return;
         }
-        if (!ShopDialogueReady)
-        {
-            ConsumeKey(e);
-            return;
-        }
-
         if (_shopPage == ShopPage.Commands)
         {
             if (e.KeyCode is Keys.A or Keys.Left or Keys.W or Keys.Up)
@@ -348,7 +341,12 @@ internal sealed partial class GameForm
             else if (e.KeyCode is Keys.D or Keys.Right or Keys.S or Keys.Down)
                 MoveShopCommand(1);
             else if (e.KeyCode is Keys.Enter or Keys.Space or Keys.E)
-                ActivateShopCommand();
+            {
+                // The eyes may keep speaking while the player surveys the
+                // controls. A confirm waits for the current line to finish so
+                // it cannot erase the message halfway through.
+                if (ShopDialogueReady) ActivateShopCommand();
+            }
             else return;
         }
         else
@@ -358,7 +356,9 @@ internal sealed partial class GameForm
             else if (e.KeyCode is Keys.S or Keys.Down)
                 MoveShopList(1);
             else if (e.KeyCode is Keys.Enter or Keys.Space or Keys.E)
-                ActivateShopListSelection();
+            {
+                if (ShopDialogueReady) ActivateShopListSelection();
+            }
             else return;
         }
         ConsumeKey(e);
@@ -465,29 +465,17 @@ internal sealed partial class GameForm
         }
 
         item.Stock--;
+        AddInventoryItem(item.Kind);
         switch (item.Kind)
         {
             case ShopItemKind.FramePatch:
-            {
-                var repair = ApplyPurchasedRepair(1);
-                StartShopDialogue(repair.Applied > 0
-                    ? "One fracture closed. Try not to make it sentimental."
-                    : "Patch banked. It will wake after the next fracture.");
+                StartShopDialogue("Patch sealed for transit. Spend it when the frame fractures.");
                 break;
-            }
             case ShopItemKind.ReconstructionGel:
-            {
-                var repair = ApplyPurchasedRepair(2);
-                StartShopDialogue(repair.Applied == 0
-                    ? "Gel banked. Two fractures may borrow its memory."
-                    : repair.Banked > 0
-                        ? "One fracture forgotten. The remaining gel is banked."
-                        : "The gel remembers the shape your frame forgot.");
+                StartShopDialogue("Gel sealed for transit. It waits for your command, not your wound.");
                 break;
-            }
             case ShopItemKind.AegisFuse:
-                _shopProtectionCharges++;
-                StartShopDialogue("Ward armed. The next hit belongs to the fuse, not you.");
+                StartShopDialogue("Fuse transferred. Arm it before the dark reaches you.");
                 break;
         }
         SaveSettings();
@@ -504,26 +492,6 @@ internal sealed partial class GameForm
         var fieldSpend = Math.Min(_fieldCredits, price);
         _fieldCredits -= fieldSpend;
         _settings.TotalCredits -= price - fieldSpend;
-        return true;
-    }
-
-    private (int Applied, int Banked) ApplyPurchasedRepair(int repairPoints)
-    {
-        repairPoints = Math.Max(0, repairPoints);
-        var applied = Math.Min(_damageTaken, repairPoints);
-        var banked = repairPoints - applied;
-        _damageTaken -= applied;
-        _shopRepairReserve += banked;
-        return (applied, banked);
-    }
-
-    private bool TryConsumeShopRepairReserve()
-    {
-        if (_shopRepairReserve <= 0 || _damageTaken <= 0) return false;
-        _shopRepairReserve--;
-        _damageTaken--;
-        _missionNotice = "BANKED REPAIR DEPLOYED / FRAME RESTORED";
-        _missionNoticeTimer = 2.2f;
         return true;
     }
 
@@ -587,8 +555,8 @@ internal sealed partial class GameForm
 
     private bool TryConsumeShopProtection()
     {
-        if (_shopProtectionCharges <= 0) return false;
-        _shopProtectionCharges--;
+        if (!_shopProtectionArmed) return false;
+        _shopProtectionArmed = false;
         _invulnerability = Math.Max(_invulnerability, 1.25f);
         _impactCell = new Point((int)MathF.Round(_visualCell.X), (int)MathF.Round(_visualCell.Y));
         _impactPulse = 1;

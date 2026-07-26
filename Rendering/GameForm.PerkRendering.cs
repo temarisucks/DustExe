@@ -70,8 +70,8 @@ internal sealed partial class GameForm
                 equipped[equippedCount++] = definition.Id;
         if (equippedCount == 0) return;
 
-        // Six sockets is the largest valid profile (five passive perks and one
-        // Space-channel perk). Keeping every state inside its own badge avoids
+        // The airframe exposes one passive socket and one active socket. Keeping
+        // every state inside its own badge avoids
         // long equipment names fighting a changing status readout.
         const float iconSize = 38;
         const float gap = 6;

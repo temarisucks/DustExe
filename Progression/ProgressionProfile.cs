@@ -86,18 +86,11 @@ internal sealed class ProgressionProfile
             .OrderBy(id => (int)id)
             .ToList();
 
-        // Space is one physical control, so a malformed/old save may retain only
-        // one active ability. Ghost Form wins the deterministic legacy tie-break.
-        var retainedSpacePerk = validPerks
-            .Where(id => ProgressionCatalog.GetPerk(id).Activation == PerkActivation.Space)
-            .OrderByDescending(id => id == PerkId.GhostForm)
-            .ThenBy(id => (int)id)
-            .Cast<PerkId?>()
-            .FirstOrDefault();
-        EquippedPerks = validPerks
-            .Where(id => ProgressionCatalog.GetPerk(id).Activation != PerkActivation.Space ||
-                         id == retainedSpacePerk)
-            .ToList();
+        // The drone has one passive socket and one active socket. Older profiles
+        // may contain the former multi-passive loadout, so normalization keeps a
+        // deterministic valid perk in each channel instead of activating several
+        // modifications behind the player's back.
+        EquippedPerks = LimitToLoadoutSlots(validPerks);
     }
 
     internal bool IsAchievementUnlocked(AchievementId id)
@@ -193,12 +186,9 @@ internal sealed class ProgressionProfile
         if (EquippedPerks.Contains(id))
             return PerkEquipResult.AlreadyEquipped;
 
-        if (definition.Activation == PerkActivation.Space)
-        {
-            EquippedPerks.RemoveAll(equippedId =>
-                ProgressionCatalog.TryGetPerk(equippedId, out var equippedDefinition) &&
-                equippedDefinition.Activation == PerkActivation.Space);
-        }
+        EquippedPerks.RemoveAll(equippedId =>
+            ProgressionCatalog.TryGetPerk(equippedId, out var equippedDefinition) &&
+            equippedDefinition.Activation == definition.Activation);
 
         EquippedPerks.Add(id);
         EquippedPerks.Sort((left, right) => ((int)left).CompareTo((int)right));
@@ -206,6 +196,36 @@ internal sealed class ProgressionProfile
     }
 
     internal bool UnequipPerk(PerkId id) => EquippedPerks.Remove(id);
+
+    /// <summary>
+    /// Sanitizes untrusted online loadouts and legacy saves to the same physical
+    /// one-passive/one-active socket rule used by the archive equip screen.
+    /// </summary>
+    internal static List<PerkId> LimitToLoadoutSlots(IEnumerable<PerkId> perks)
+    {
+        var valid = perks
+            .Where(id => ProgressionCatalog.TryGetPerk(id, out _))
+            .Distinct()
+            .OrderBy(id => (int)id)
+            .ToArray();
+        var passive = valid
+            .Where(id => ProgressionCatalog.GetPerk(id).Activation == PerkActivation.Passive)
+            .Cast<PerkId?>()
+            .FirstOrDefault();
+        var active = valid
+            .Where(id => ProgressionCatalog.GetPerk(id).Activation == PerkActivation.Space)
+            // Preserve the old deterministic active-channel migration rule.
+            .OrderByDescending(id => id == PerkId.GhostForm)
+            .ThenBy(id => (int)id)
+            .Cast<PerkId?>()
+            .FirstOrDefault();
+
+        var result = new List<PerkId>(2);
+        if (passive.HasValue) result.Add(passive.Value);
+        if (active.HasValue) result.Add(active.Value);
+        result.Sort((left, right) => ((int)left).CompareTo((int)right));
+        return result;
+    }
 
     private AchievementProgressState FindOrCreateState(AchievementId id)
     {

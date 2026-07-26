@@ -108,8 +108,10 @@ internal sealed class OnlineRemotePlayer
     public bool LastDamageWasHollow { get; set; }
     public bool AppearanceReady { get; set; }
     public long AccountCredits { get; set; }
-    public int ShopRepairReserve { get; set; }
+    public int FramePatchInventory { get; set; }
+    public int ReconstructionGelInventory { get; set; }
     public int ShopProtectionCharges { get; set; }
+    public bool ShopProtectionArmed { get; set; }
     public long ShopTransactionRevision { get; set; }
     public string ShopMessage { get; set; } = string.Empty;
     public int ShopCue { get; set; }
@@ -121,7 +123,7 @@ internal readonly record struct OnlineMoveIntent(long Sequence, Direction Direct
 
 internal sealed class OnlineWorldSnapshot
 {
-    public int ProtocolVersion { get; set; } = 3;
+    public int ProtocolVersion { get; set; } = 4;
     public long Tick { get; set; }
     public long WorldRevision { get; set; }
     public long AuthorityRevision { get; set; }
@@ -189,8 +191,10 @@ internal sealed class OnlinePlayerSnapshot
     public float HollowKillerCooldown { get; set; }
     public bool LastDamageWasHollow { get; set; }
     public long AccountCredits { get; set; }
-    public int ShopRepairReserve { get; set; }
+    public int FramePatchInventory { get; set; }
+    public int ReconstructionGelInventory { get; set; }
     public int ShopProtectionCharges { get; set; }
+    public bool ShopProtectionArmed { get; set; }
     public long ShopTransactionRevision { get; set; }
     public string ShopMessage { get; set; } = string.Empty;
     public int ShopCue { get; set; }
@@ -229,12 +233,38 @@ internal sealed class OnlineHollowSnapshot
     public string? TargetPlayerId { get; set; }
     public bool Empowered { get; set; }
     public bool TriangleSplit { get; set; }
+    public bool TriangleReforming { get; set; }
+    public int TriangleRallyX { get; set; }
+    public int TriangleRallyY { get; set; }
+    public OnlineTriangleMemberSnapshot[] TriangleMembers { get; set; } = [];
     public float TriangleSplitTimer { get; set; }
     public float TriangleOrbitAngle { get; set; }
     public float PreviousTriangleOrbitAngle { get; set; }
     public float AbilityCooldown { get; set; }
     public float ProjectileCooldown { get; set; }
     public float TeleportFlash { get; set; }
+}
+
+internal sealed class OnlineTriangleMemberSnapshot
+{
+    public int Index { get; set; }
+    public int CellX { get; set; }
+    public int CellY { get; set; }
+    public int TargetX { get; set; }
+    public int TargetY { get; set; }
+    public int PreviousX { get; set; }
+    public int PreviousY { get; set; }
+    public float VisualX { get; set; }
+    public float VisualY { get; set; }
+    public float PreviousVisualX { get; set; }
+    public float PreviousVisualY { get; set; }
+    public float MoveFromX { get; set; }
+    public float MoveFromY { get; set; }
+    public float MoveToX { get; set; }
+    public float MoveToY { get; set; }
+    public float MoveProgress { get; set; }
+    public float Cooldown { get; set; }
+    public float FacingAngle { get; set; }
 }
 
 internal sealed class OnlineSentrySnapshot

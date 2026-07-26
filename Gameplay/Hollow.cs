@@ -11,6 +11,30 @@ internal enum HollowType
 }
 internal enum HollowState { Roam, Chase, Search }
 
+internal sealed class TriangleMember
+{
+    public int Index { get; init; }
+    public Point Cell { get; set; }
+    public Point TargetCell { get; set; }
+    public Point PreviousCell { get; set; }
+    public PointF VisualCell { get; set; }
+    public PointF PreviousVisualCell { get; set; }
+    public PointF MoveFrom { get; set; }
+    public PointF MoveTo { get; set; }
+    public float MoveProgress { get; set; } = 1;
+    public float Cooldown { get; set; }
+    public float FacingAngle { get; set; }
+
+    // Presentation state is deliberately separate from the host-authoritative
+    // member simulation, just like it is for an intact Hollow.
+    public bool PresentationReady { get; set; }
+    public PointF PresentationCell { get; set; }
+    public PointF PreviousPresentationCell { get; set; }
+    public float PresentationSnapshotAge { get; set; }
+
+    public bool IsMoving => MoveProgress < 1;
+}
+
 internal sealed class Hollow
 {
     public HollowType Type { get; init; }
@@ -37,6 +61,9 @@ internal sealed class Hollow
     public string? TargetPlayerId { get; set; }
     public bool Empowered { get; set; }
     public bool TriangleSplit { get; set; }
+    public bool TriangleReforming { get; set; }
+    public Point TriangleRallyCell { get; set; }
+    public List<TriangleMember> TriangleMembers { get; } = [];
     public float TriangleSplitTimer { get; set; }
     public float TriangleOrbitAngle { get; set; }
     public float PreviousTriangleOrbitAngle { get; set; }

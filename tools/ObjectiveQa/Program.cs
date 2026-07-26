@@ -57,6 +57,9 @@ internal static class Program
         VerifyCharacterAudio(gameAssembly, gameType, form);
         VerifyFieldDirectives(gameType, form, outputDirectory);
         VerifyShopVisuals(gameType, form, outputDirectory);
+        VerifyInventoryAndPerkLoadout(
+            gameAssembly, gameType, form, outputDirectory);
+        VerifySpatialMenuAndOverlayInput(gameAssembly, gameType, form);
         VerifyMultiplayerObjectiveGenerationAndSmoothing(
             gameAssembly, gameType, outputDirectory);
 
@@ -209,6 +212,161 @@ internal static class Program
         gameType.GetMethod("LeaveShop", InstanceFlags)!.Invoke(form, null);
     }
 
+    private static void VerifyInventoryAndPerkLoadout(
+        Assembly gameAssembly,
+        Type gameType,
+        Form form,
+        string outputDirectory)
+    {
+        var shopItemKind = gameAssembly.GetType("Dust.ShopItemKind", true)!;
+        var framePatch = Enum.Parse(shopItemKind, "FramePatch");
+        var reconstructionGel = Enum.Parse(shopItemKind, "ReconstructionGel");
+        SetField(gameType, form, "_damageTaken", 2);
+        SetField(gameType, form, "_framePatchInventory", 1);
+        var restored = (int)gameType.GetMethod(
+            "ApplyLocalHealingItem", InstanceFlags)!.Invoke(form, [framePatch])!;
+        Require(restored == 1 && Field<int>(gameType, form, "_damageTaken") == 1 &&
+                Field<int>(gameType, form, "_framePatchInventory") == 0,
+            "A carried frame patch was not consumed as a manual one-point heal.");
+
+        SetField(gameType, form, "_reconstructionGelInventory", 1);
+        restored = (int)gameType.GetMethod(
+            "ApplyLocalHealingItem", InstanceFlags)!.Invoke(form, [reconstructionGel])!;
+        Require(restored == 1 && Field<int>(gameType, form, "_damageTaken") == 0 &&
+                Field<int>(gameType, form, "_reconstructionGelInventory") == 0,
+            "Reconstruction gel did not restore remaining integrity on demand.");
+
+        SetField(gameType, form, "_shopProtectionCharges", 1);
+        SetField(gameType, form, "_shopProtectionArmed", false);
+        var armed = (bool)gameType.GetMethod(
+            "TryActivateDefensiveItem", InstanceFlags)!.Invoke(form, null)!;
+        Require(armed && Field<bool>(gameType, form, "_shopProtectionArmed") &&
+                Field<int>(gameType, form, "_shopProtectionCharges") == 0,
+            "A carried Aegis fuse was not manually armed.");
+        var absorbed = (bool)gameType.GetMethod(
+            "TryConsumeShopProtection", InstanceFlags)!.Invoke(form, null)!;
+        Require(absorbed && !Field<bool>(gameType, form, "_shopProtectionArmed"),
+            "An armed Aegis fuse did not cancel exactly one hit.");
+
+        var perkIdType = gameAssembly.GetType("Dust.PerkId", true)!;
+        var allPerks = Enum.GetValues(perkIdType);
+        var progressionType = gameAssembly.GetType("Dust.ProgressionProfile", true)!;
+        var limited = ((IEnumerable)progressionType.GetMethod(
+                "LimitToLoadoutSlots", StaticFlags)!.Invoke(null, [allPerks])!)
+            .Cast<object>()
+            .Select(value => value.ToString())
+            .ToArray();
+        Require(limited.Length == 2 && limited.Contains("Durable") &&
+                limited.Contains("GhostForm"),
+            "Legacy or network perk sets were not reduced to one passive and one active slot.");
+
+        SetField(gameType, form, "_framePatchInventory", 2);
+        SetField(gameType, form, "_reconstructionGelInventory", 1);
+        SetField(gameType, form, "_shopProtectionCharges", 2);
+        SetField(gameType, form, "_inventoryOpen", true);
+        SaveFrame(gameType, form,
+            Path.Combine(outputDirectory, "player-inventory.png"));
+        SetField(gameType, form, "_inventoryOpen", false);
+        SetField(gameType, form, "_framePatchInventory", 0);
+        SetField(gameType, form, "_reconstructionGelInventory", 0);
+        SetField(gameType, form, "_shopProtectionCharges", 0);
+    }
+
+    private static void VerifySpatialMenuAndOverlayInput(
+        Assembly gameAssembly,
+        Type gameType,
+        Form form)
+    {
+        var moveCustomizeVertical = gameType.GetMethod(
+            "MoveCustomizeVertical", InstanceFlags)!;
+        var moveCustomizeSelection = gameType.GetMethod(
+            "MoveCustomizeSelection", InstanceFlags)!;
+        SetField(gameType, form, "_customizeSection", 2);
+        SetField(gameType, form, "_customizeIndex", 2);
+        moveCustomizeVertical.Invoke(form, [1]);
+        Require(Field<int>(gameType, form, "_customizeSection") == 2 &&
+                Field<int>(gameType, form, "_customizeIndex") == 8,
+            "Down did not preserve the visible color-grid column.");
+        moveCustomizeVertical.Invoke(form, [-1]);
+        Require(Field<int>(gameType, form, "_customizeIndex") == 2,
+            "Up did not return through the visible color-grid column.");
+        SetField(gameType, form, "_customizeIndex", 5);
+        moveCustomizeSelection.Invoke(form, [1]);
+        Require(Field<int>(gameType, form, "_customizeIndex") == 5,
+            "Right wrapped across color-grid rows instead of stopping at the edge.");
+
+        var moveRunVertical = gameType.GetMethod(
+            "MoveRunSettingsVertical", InstanceFlags)!;
+        foreach (var (from, direction, expected) in new[]
+                 {
+                     (2, 1, 10), (10, -1, 2),
+                     (9, 1, 11), (11, -1, 9)
+                 })
+        {
+            SetField(gameType, form, "_runSettingsSelection", from);
+            moveRunVertical.Invoke(form, [direction]);
+            Require(Field<int>(gameType, form, "_runSettingsSelection") == expected,
+                $"Run-settings focus moved {from} -> " +
+                $"{Field<int>(gameType, form, "_runSettingsSelection")} instead of {expected}.");
+        }
+
+        var modeField = gameType.GetField("_mode", InstanceFlags)!;
+        var playingMode = Enum.Parse(modeField.FieldType, "Playing");
+        var shopMode = Enum.Parse(modeField.FieldType, "Shop");
+        var shopPageType = gameAssembly.GetType("Dust.ShopPage", true)!;
+        modeField.SetValue(form, shopMode);
+        SetField(gameType, form, "_shopPage", Enum.Parse(shopPageType, "Commands"));
+        SetField(gameType, form, "_shopCommandSelection", 0);
+        gameType.GetMethod("StartShopDialogue", InstanceFlags)!
+            .Invoke(form, ["THE LINE IS STILL BEING TYPED."]);
+        gameType.GetMethod("HandleShopKey", InstanceFlags)!
+            .Invoke(form, [new KeyEventArgs(Keys.Down)]);
+        Require(Field<int>(gameType, form, "_shopCommandSelection") == 1 &&
+                Field<int>(gameType, form, "_shopDialogueVisible") == 0,
+            "Shop focus could not move without skipping an active typewriter line.");
+        gameType.GetMethod("UpdateShop", InstanceFlags)!.Invoke(form, [.1f]);
+        Require(Field<int>(gameType, form, "_shopDialogueVisible") > 0,
+            "Shop dialogue stopped typing after menu focus moved.");
+
+        modeField.SetValue(form, playingMode);
+        var settings = FieldObject(gameType, form, "_settings");
+        var progression = Property<object>(settings, "Progression");
+        var equipped = (IList)Property<object>(progression, "EquippedPerks");
+        var originalPerks = equipped.Cast<object>().ToArray();
+        equipped.Clear();
+        equipped.Add(Enum.Parse(gameAssembly.GetType("Dust.PerkId", true)!, "Camouflage"));
+        SetField(gameType, form, "_inventoryOpen", true);
+        SetField(gameType, form, "_inventorySelection", 0);
+        SetField(gameType, form, "_shopProtectionCharges", 1);
+        SetField(gameType, form, "_shopProtectionArmed", false);
+        gameType.GetMethod("HandleInventoryKey", InstanceFlags)!
+            .Invoke(form, [new KeyEventArgs(Keys.J)]);
+        Require(Field<int>(gameType, form, "_inventorySelection") == 2 &&
+                Field<int>(gameType, form, "_shopProtectionCharges") == 0 &&
+                Field<bool>(gameType, form, "_shopProtectionArmed"),
+            "J did not arm the Aegis channel while an active perk owned Space.");
+        SetField(gameType, form, "_shopProtectionCharges", 1);
+        SetField(gameType, form, "_shopProtectionArmed", false);
+        gameType.GetMethod("HandleInventoryKey", InstanceFlags)!
+            .Invoke(form, [new KeyEventArgs(Keys.Space)]);
+        Require(Field<int>(gameType, form, "_shopProtectionCharges") == 1 &&
+                !Field<bool>(gameType, form, "_shopProtectionArmed"),
+            "Space bypassed the active-perk/Aegis key split inside inventory.");
+        equipped.Clear();
+        foreach (var perk in originalPerks) equipped.Add(perk);
+        SetField(gameType, form, "_inventoryOpen", false);
+        SetField(gameType, form, "_shopProtectionCharges", 0);
+
+        SetField(gameType, form, "_missionDossierOpen", true);
+        SetField(gameType, form, "_missionDossierOpenedAt", DateTime.Now);
+        SetField(gameType, form, "_pauseMenuOpen", false);
+        gameType.GetMethod("HandlePlayingKey", InstanceFlags)!
+            .Invoke(form, [new KeyEventArgs(Keys.Escape)]);
+        Require(!Field<bool>(gameType, form, "_missionDossierOpen") &&
+                !Field<bool>(gameType, form, "_pauseMenuOpen"),
+            "Closing the opening dossier also opened the pause console.");
+    }
+
     private static void VerifyMultiplayerObjectiveGenerationAndSmoothing(
         Assembly gameAssembly,
         Type gameType,
@@ -332,8 +490,15 @@ internal static class Program
 
         var snapshot = gameType.GetMethod("BuildOnlineSnapshot", InstanceFlags)!
             .Invoke(form, null)!;
-        Require(Property<int>(snapshot, "ProtocolVersion") == 3,
-            "The expanded-enemy gameplay protocol was not bumped to version 3.");
+        Require(Property<int>(snapshot, "ProtocolVersion") == 4,
+            "The per-player inventory protocol was not bumped to version 4.");
+        var localPlayer = ((IEnumerable)Property<object>(snapshot, "Players"))
+            .Cast<object>()
+            .First(player => Property<string>(player, "PlayerId") == "player-a");
+        Require(localPlayer.GetType().GetProperty("FramePatchInventory") is not null &&
+                localPlayer.GetType().GetProperty("ReconstructionGelInventory") is not null &&
+                localPlayer.GetType().GetProperty("ShopProtectionArmed") is not null,
+            "The online checkpoint omitted per-player carried supply state.");
         var snapshotDirectives = ((IEnumerable)Property<object>(
             snapshot, "FieldDirectives")).Cast<object>().ToArray();
         Require(snapshotDirectives.Length == 16,

@@ -82,10 +82,14 @@ internal sealed partial class GameForm
             _audio.Play(AudioCue.Confirm);
             EnterTitle();
         }
-        else if (e.KeyCode is Keys.W or Keys.Up || e.Shift && e.KeyCode == Keys.Tab)
+        else if (e.Shift && e.KeyCode == Keys.Tab)
             MoveCustomizeSection(-1);
-        else if (e.KeyCode is Keys.S or Keys.Down or Keys.Tab)
+        else if (e.KeyCode == Keys.Tab)
             MoveCustomizeSection(1);
+        else if (e.KeyCode is Keys.W or Keys.Up)
+            MoveCustomizeVertical(-1);
+        else if (e.KeyCode is Keys.S or Keys.Down)
+            MoveCustomizeVertical(1);
         else if (e.KeyCode is Keys.A or Keys.Left)
             MoveCustomizeSelection(-1);
         else if (e.KeyCode is Keys.D or Keys.Right)
@@ -134,14 +138,14 @@ internal sealed partial class GameForm
 
     private void HandlePlayingKey(KeyEventArgs e)
     {
+        if (_inventoryOpen)
+        {
+            HandleInventoryKey(e);
+            return;
+        }
         if (_missionDossierOpen)
         {
-            if (e.KeyCode == Keys.Escape)
-            {
-                CloseMissionDossier(playSound: false);
-                OpenPauseMenu();
-            }
-            else if (e.KeyCode == Keys.Q)
+            if (e.KeyCode is Keys.Escape or Keys.Q)
             {
                 CloseMissionDossier();
             }
@@ -159,6 +163,12 @@ internal sealed partial class GameForm
             ConsumeKey(e);
             return;
         }
+        if (e.KeyCode == Keys.I)
+        {
+            OpenInventory();
+            ConsumeKey(e);
+            return;
+        }
         if (e.KeyCode == Keys.Escape)
         {
             OpenPauseMenu();
@@ -171,7 +181,16 @@ internal sealed partial class GameForm
             ConsumeKey(e);
             return;
         }
-        if (e.KeyCode == Keys.Space && TryActivateSpacePerk())
+        if (e.KeyCode == Keys.Space &&
+            (HasActivePerkEquipped
+                ? TryActivateSpacePerk()
+                : TryActivateDefensiveItem()))
+        {
+            ConsumeKey(e);
+            return;
+        }
+        if (e.KeyCode == Keys.J && HasActivePerkEquipped &&
+            TryActivateDefensiveItem())
         {
             ConsumeKey(e);
             return;
@@ -338,10 +357,15 @@ internal sealed partial class GameForm
                 HandleOnlineMouseMove(hit);
                 break;
             case ScreenMode.Playing:
-                if (_missionDossierOpen)
+                if (_inventoryOpen)
+                    HandleInventoryMouseMove(hit);
+                else if (_missionDossierOpen)
                     _hoverMissionDossierClose = _missionDossierCloseButton.Contains(hit);
                 else
+                {
                     _hoverMissionDossier = _missionDossierButton.Contains(hit);
+                    _hoverInventory = _inventoryButton.Contains(hit);
+                }
                 break;
             case ScreenMode.Shop:
                 HandleShopMouseMove(hit);
@@ -517,6 +541,11 @@ internal sealed partial class GameForm
         }
         else if (_mode == ScreenMode.Playing)
         {
+            if (_inventoryOpen)
+            {
+                HandleInventoryMouseDown(hit);
+                return;
+            }
             if (_missionDossierOpen)
             {
                 if (_missionDossierCloseButton.Contains(hit))
@@ -526,6 +555,11 @@ internal sealed partial class GameForm
             if (_missionDossierButton.Contains(hit))
             {
                 OpenMissionDossier();
+                return;
+            }
+            if (_inventoryButton.Contains(hit))
+            {
+                OpenInventory();
                 return;
             }
         }
@@ -619,6 +653,10 @@ internal sealed partial class GameForm
         if (_hoverShopRow >= 0) return 390 + _hoverShopRow;
         if (_hoverMissionDossier) return 395;
         if (_hoverMissionDossierClose) return 396;
+        if (_hoverInventory) return 397;
+        if (_hoverInventoryClose) return 398;
+        if (_hoverInventoryUse) return 399;
+        if (_hoverInventoryRow >= 0) return 405 + _hoverInventoryRow;
         if (_hoverBack) return 400;
         if (_hoverPause >= 0) return 410 + _hoverPause;
         if (_hoverOverlay >= 0) return 500 + _hoverOverlay;

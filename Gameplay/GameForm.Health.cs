@@ -12,6 +12,7 @@ internal sealed partial class GameForm
         if (_mode != ScreenMode.Playing) return;
         if (_pauseMenuOpen) SettleOfflinePauseClock();
         ResetPauseMenuState();
+        CloseInventory(playSound: false);
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         _failedTime = DateTime.Now - _startedAt;

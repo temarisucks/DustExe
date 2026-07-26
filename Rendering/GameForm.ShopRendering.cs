@@ -781,18 +781,8 @@ internal sealed partial class GameForm
     private void DrawShopKiosk(Graphics g, ShopKiosk kiosk)
     {
         var pose = GetRoomFixturePose(kiosk.Cell, kiosk.WallSide);
-        var p = pose.Center;
         var bodyFrame = PositiveHash((int)MathF.Floor(_time * 2.2f) + kiosk.RoomId * 3) % 4;
         var player = CellCenter(_visualCell);
-        var inverseRadians = -pose.Rotation * MathF.PI / 180f;
-        var relativeX = player.X - p.X;
-        var relativeY = player.Y - p.Y;
-        var localPlayerX = relativeX * MathF.Cos(inverseRadians) -
-                           relativeY * MathF.Sin(inverseRadians);
-        var localPlayerY = relativeX * MathF.Sin(inverseRadians) +
-                           relativeY * MathF.Cos(inverseRadians);
-        var lookX = Math.Abs(localPlayerX) < 12 ? 0 : Math.Sign(localPlayerX);
-        var lookY = Math.Abs(localPlayerY) < 12 ? 0 : Math.Sign(localPlayerY);
         using var gantryShadow = new SolidBrush(Color.FromArgb(220, C.Void));
         using var gantry = new SolidBrush(Color.FromArgb(69, 78, 66));
         using var edge = new SolidBrush(Color.FromArgb(128, 124, 94));
@@ -821,10 +811,16 @@ internal sealed partial class GameForm
         g.DrawLine(cable, -20, -30, -17, -20 + bodyFrame);
         g.DrawLine(cable, 17, -30, 19, -18 - bodyFrame / 2f);
 
-        var bodyCenter = new PointF(0, -1);
-        DrawShopkeeperShroud(g, bodyCenter, .52f, bodyFrame);
-        DrawShopkeeperEyes(g, new PointF(bodyCenter.X, bodyCenter.Y - 28 * .52f),
-            .52f, lookX, lookY, kiosk.RoomId, 0);
+        g.Restore(state);
+
+        // The counter is wall-mounted, but the keeper is not a decal painted
+        // onto it. Rendering the frontal portrait inside the chassis transform
+        // made east/west keepers lie sideways and the south keeper hang upside
+        // down. Its four poses are now authored upright in world space.
+        DrawWorldShopkeeper(g, kiosk, pose, bodyFrame, player);
+
+        state = g.Save();
+        ApplyRoomFixturePresentation(g, pose);
 
         g.FillPolygon(gantry,
         [
@@ -839,15 +835,199 @@ internal sealed partial class GameForm
         DrawShopKioskFacingProfile(g, kiosk.WallSide, bodyFrame);
         g.Restore(state);
 
-        var near = IsShopKioskInRange(_playerCell);
-        var labelRadians = pose.Rotation * MathF.PI / 180f;
-        var labelCenter = new PointF(
-            p.X - MathF.Sin(labelRadians) * 35,
-            p.Y + MathF.Cos(labelRadians) * 35);
-        if (near || ((int)(_time * 2 + kiosk.RoomId) & 1) == 0)
-            LabFont.Draw(g, near ? "E / TRADE" : "SAFE TRADE",
-                labelCenter.X, labelCenter.Y, 1,
-                near ? C.Signal : C.Sick, LabTextAlign.Center, 0);
+    }
+
+    private void DrawWorldShopkeeper(
+        Graphics g,
+        ShopKiosk kiosk,
+        RoomFixturePose pose,
+        int bodyFrame,
+        PointF player)
+    {
+        var wallOffset = kiosk.WallSide switch
+        {
+            Direction.Up => new PointF(0, -3),
+            Direction.Right => new PointF(3, 0),
+            Direction.Down => new PointF(0, 3),
+            _ => new PointF(-3, 0)
+        };
+        var center = new PointF(
+            pose.Center.X + wallOffset.X,
+            pose.Center.Y + wallOffset.Y);
+        const float scale = .52f;
+        var worldLookX = Math.Abs(player.X - center.X) < 12
+            ? 0
+            : Math.Sign(player.X - center.X);
+        var worldLookY = Math.Abs(player.Y - center.Y) < 12
+            ? 0
+            : Math.Sign(player.Y - center.Y);
+
+        switch (kiosk.WallSide)
+        {
+            case Direction.Up:
+                // North wall: the keeper faces south, exposing the familiar
+                // full shroud and both eyes above the counter.
+                DrawShopkeeperShroud(g, center, scale, bodyFrame);
+                DrawShopkeeperEyes(g,
+                    new PointF(center.X, center.Y - 28 * scale),
+                    scale, worldLookX, worldLookY, kiosk.RoomId, 0);
+                break;
+
+            case Direction.Down:
+                // South wall: shoulders and hood are seen from behind while the
+                // eyes peer over the north-facing edge of the silhouette.
+                DrawShopkeeperRearShroud(g, center, scale, bodyFrame);
+                DrawShopkeeperEyes(g,
+                    new PointF(center.X, center.Y - 20 * scale),
+                    scale * .82f, worldLookX, Math.Min(0, worldLookY),
+                    kiosk.RoomId, 0);
+                break;
+
+            case Direction.Right:
+                DrawShopkeeperSideShroud(g, center, scale, bodyFrame,
+                    facingRight: false);
+                DrawShopkeeperSideEyes(g, center, scale, facingRight: false,
+                    worldLookX, worldLookY, kiosk.RoomId);
+                break;
+
+            default:
+                DrawShopkeeperSideShroud(g, center, scale, bodyFrame,
+                    facingRight: true);
+                DrawShopkeeperSideEyes(g, center, scale, facingRight: true,
+                    worldLookX, worldLookY, kiosk.RoomId);
+                break;
+        }
+    }
+
+    private static void DrawShopkeeperRearShroud(
+        Graphics g,
+        PointF center,
+        float scale,
+        int frame)
+    {
+        var heave = frame switch { 1 => 2f, 3 => -2f, _ => 0 };
+        using var black = new SolidBrush(Color.Black);
+        using var inside = new SolidBrush(Color.FromArgb(4, 6, 6));
+        using var seam = new SolidBrush(Color.FromArgb(12, 16, 15));
+        g.FillPolygon(black,
+        [
+            ShopkeeperPoint(center, scale, -70, 69),
+            ShopkeeperPoint(center, scale, -61 - heave, 8),
+            ShopkeeperPoint(center, scale, -43, -39),
+            ShopkeeperPoint(center, scale, -17, -62 - heave),
+            ShopkeeperPoint(center, scale, 0, -54),
+            ShopkeeperPoint(center, scale, 18, -63 - heave),
+            ShopkeeperPoint(center, scale, 45, -39),
+            ShopkeeperPoint(center, scale, 62 + heave, 8),
+            ShopkeeperPoint(center, scale, 71, 69)
+        ]);
+        g.FillPolygon(inside,
+        [
+            ShopkeeperPoint(center, scale, -49, 61),
+            ShopkeeperPoint(center, scale, -42, 5),
+            ShopkeeperPoint(center, scale, -24, -37),
+            ShopkeeperPoint(center, scale, 0, -47),
+            ShopkeeperPoint(center, scale, 25, -37),
+            ShopkeeperPoint(center, scale, 43, 5),
+            ShopkeeperPoint(center, scale, 50, 61)
+        ]);
+        g.FillPolygon(black,
+        [
+            ShopkeeperPoint(center, scale, -68, 47),
+            ShopkeeperPoint(center, scale, -78, 84),
+            ShopkeeperPoint(center, scale, -54, 75),
+            ShopkeeperPoint(center, scale, -38, 91 + heave),
+            ShopkeeperPoint(center, scale, -17, 74),
+            ShopkeeperPoint(center, scale, 0, 94 - heave),
+            ShopkeeperPoint(center, scale, 18, 74),
+            ShopkeeperPoint(center, scale, 39, 91 + heave),
+            ShopkeeperPoint(center, scale, 55, 75),
+            ShopkeeperPoint(center, scale, 79, 84),
+            ShopkeeperPoint(center, scale, 69, 47)
+        ]);
+        g.FillRectangle(seam, center.X - 3 * scale, center.Y - 43 * scale,
+            6 * scale, 82 * scale);
+        g.FillRectangle(seam, center.X - 34 * scale, center.Y + 4 * scale,
+            68 * scale, 4 * scale);
+    }
+
+    private static void DrawShopkeeperSideShroud(
+        Graphics g,
+        PointF center,
+        float scale,
+        int frame,
+        bool facingRight)
+    {
+        var sign = facingRight ? 1f : -1f;
+        var heave = frame switch { 1 => 2f, 3 => -2f, _ => 0 };
+        PointF P(float x, float y) =>
+            ShopkeeperPoint(center, scale, x * sign, y);
+        using var black = new SolidBrush(Color.Black);
+        using var inside = new SolidBrush(Color.FromArgb(4, 6, 6));
+        using var fringe = new SolidBrush(Color.FromArgb(12, 16, 15));
+        g.FillPolygon(black,
+        [
+            P(-55, 71), P(-50 - heave, 10), P(-34, -38),
+            P(-5, -63 - heave), P(25, -52), P(49 + heave, -21),
+            P(62, 3), P(46, 18), P(57, 70)
+        ]);
+        g.FillPolygon(inside,
+        [
+            P(-37, 60), P(-34, 8), P(-18, -34), P(8, -49),
+            P(32, -35), P(44, -12), P(34, 7), P(40, 60)
+        ]);
+        g.FillPolygon(black,
+        [
+            P(-52, 46), P(-66, 84), P(-39, 75), P(-18, 92 + heave),
+            P(0, 73), P(21, 91 - heave), P(39, 72), P(64, 82),
+            P(56, 45)
+        ]);
+        var fringeX = facingRight ? center.X - 24 * scale : center.X + 8 * scale;
+        g.FillRectangle(fringe, fringeX, center.Y - 45 * scale,
+            16 * scale, 5 * scale);
+        g.FillRectangle(fringe, center.X - 8 * scale, center.Y + 9 * scale,
+            26 * scale, 4 * scale);
+    }
+
+    private void DrawShopkeeperSideEyes(
+        Graphics g,
+        PointF center,
+        float scale,
+        bool facingRight,
+        int lookX,
+        int lookY,
+        int seed)
+    {
+        var sign = facingRight ? 1f : -1f;
+        var blink = (_time + seed * .217f) % 6.1f < .13f;
+        using var glow = new SolidBrush(Color.FromArgb(33, C.Bone));
+        using var eye = new SolidBrush(C.Bone);
+        using var pupil = new SolidBrush(C.Void);
+        var centers = new[]
+        {
+            new PointF(center.X + sign * 34 * scale, center.Y - 27 * scale),
+            new PointF(center.X + sign * 42 * scale, center.Y - 13 * scale)
+        };
+        foreach (var eyeCenter in centers)
+        {
+            var width = 10 * scale;
+            var height = 5 * scale;
+            g.FillRectangle(glow, eyeCenter.X - width - 2 * scale,
+                eyeCenter.Y - height - 2 * scale,
+                (width + 2 * scale) * 2, (height + 2 * scale) * 2);
+            if (blink)
+            {
+                g.FillRectangle(eye, eyeCenter.X - width, eyeCenter.Y - scale,
+                    width * 2, Math.Max(2, scale * 1.5f));
+                continue;
+            }
+            g.FillRectangle(eye, eyeCenter.X - width, eyeCenter.Y - height,
+                width * 2, height * 2);
+            var pupilX = eyeCenter.X + Math.Clamp(lookX, -1, 1) * 2.8f * scale;
+            var pupilY = eyeCenter.Y + Math.Clamp(lookY, -1, 1) * 2f * scale;
+            g.FillRectangle(pupil, pupilX - 2 * scale, pupilY - 3 * scale,
+                4 * scale, 6 * scale);
+        }
     }
 
     private static void DrawShopKioskRearProfile(Graphics g, Direction wallSide)
@@ -993,7 +1173,7 @@ internal sealed partial class GameForm
             DrawShopCommand(g, rect, commandNames[index], selected, hovered,
                 _shopPage != ShopPage.Commands && (int)_shopPage - 1 == index);
         }
-        LabFont.Draw(g, $"REPAIR {_shopRepairReserve:00}    AEGIS {_shopProtectionCharges:00}    SALVAGE {SellInventory().Sum(x => x.Count):00}",
+        LabFont.Draw(g, $"PATCH {_framePatchInventory:00}    GEL {_reconstructionGelInventory:00}    AEGIS {_shopProtectionCharges:00}    SALVAGE {SellInventory().Sum(x => x.Count):00}",
             outer.Right - 24, outer.Bottom - 25, 1, C.Sick, LabTextAlign.Right);
     }
 
@@ -1239,8 +1419,8 @@ internal sealed partial class GameForm
             g.DrawLine(line, rect.X + 24, rect.Y + 202, rect.Right - 24, rect.Y + 202);
             LabFont.Draw(g, $"FRAME DAMAGE  {_damageTaken:00}/{GetMaximumHealth():00}", rect.X + 24, rect.Y + 229, 2,
                 _damageTaken > 0 ? C.Oxide : C.Bone);
-            LabFont.Draw(g, $"WARD INVENTORY  {_shopProtectionCharges:00}", rect.X + 24, rect.Y + 278, 2, C.Signal);
-            LabFont.Draw(g, $"REPAIR RESERVE  {_shopRepairReserve:00}    SALVAGE  {SellInventory().Sum(item => item.Count):00}",
+            LabFont.Draw(g, $"PATCH {_framePatchInventory:00}   GEL {_reconstructionGelInventory:00}   WARD {_shopProtectionCharges:00}", rect.X + 24, rect.Y + 278, 2, C.Signal);
+            LabFont.Draw(g, $"SALVAGE  {SellInventory().Sum(item => item.Count):00}    {(_shopProtectionArmed ? "WARD ARMED" : "WARD SAFE")}",
                 rect.X + 24, rect.Y + 327, 2, C.Bone);
             return;
         }
@@ -1366,12 +1546,12 @@ internal sealed partial class GameForm
 
     private bool HandleShopMouseDown(PointF hit)
     {
-        if (!ShopDialogueReady) return true;
         for (var index = 0; index < _shopCommandButtons.Length; index++)
         {
             if (!_shopCommandButtons[index].Contains(hit)) continue;
             _shopCommandSelection = index;
-            ActivateShopCommand();
+            if (ShopDialogueReady) ActivateShopCommand();
+            else _audio.Play(AudioCue.Select);
             return true;
         }
         if (_shopPage == ShopPage.Commands) return false;
@@ -1379,7 +1559,8 @@ internal sealed partial class GameForm
         {
             if (!_shopListRows[index].Contains(hit)) continue;
             _shopListSelection = index;
-            ActivateShopListSelection();
+            if (ShopDialogueReady) ActivateShopListSelection();
+            else _audio.Play(AudioCue.Select);
             return true;
         }
         return false;

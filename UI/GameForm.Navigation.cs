@@ -11,6 +11,8 @@ internal sealed partial class GameForm
             ResetPauseMenuState();
         }
         DisconnectOnlineSessionForTitle();
+        CloseInventory(playSound: false);
+        ResetInventoryOverlay();
         CloseMissionDossier(playSound: false);
         ResetMissionDossier();
         if (_mode == ScreenMode.Playing) RecordAchievementAbandonment();
@@ -112,7 +114,70 @@ internal sealed partial class GameForm
             2 => _palette.Length,
             _ => 1
         };
-        _customizeIndex = Wrap(_customizeIndex + direction, count);
+        if (_customizeSection == 2)
+        {
+            // The color bank is a real 6x2 grid. Horizontal input stays on the
+            // visible row instead of falling off the right edge onto the next
+            // row's first swatch.
+            var rowStart = Math.Clamp(_customizeIndex / 6, 0, 1) * 6;
+            var column = Math.Clamp(_customizeIndex % 6 + direction, 0, 5);
+            _customizeIndex = rowStart + column;
+        }
+        else
+        {
+            _customizeIndex = Math.Clamp(_customizeIndex + direction, 0, count - 1);
+        }
+        _audio.Play(AudioCue.Select);
+    }
+
+    private void MoveCustomizeVertical(int direction)
+    {
+        if (direction < 0)
+        {
+            switch (_customizeSection)
+            {
+                case 1:
+                    _customizeSection = 0;
+                    _customizeIndex = _customizeIndex == 0 ? 1 : 3;
+                    break;
+                case 2 when _customizeIndex >= 6:
+                    _customizeIndex -= 6;
+                    break;
+                case 2:
+                    _customizeSection = 1;
+                    _customizeIndex = _customizeIndex < 3 ? 0 : 1;
+                    break;
+                case 3:
+                    _customizeSection = 2;
+                    _customizeIndex = 6;
+                    break;
+                default:
+                    return;
+            }
+        }
+        else
+        {
+            switch (_customizeSection)
+            {
+                case 0:
+                    _customizeSection = 1;
+                    _customizeIndex = _customizeIndex <= 1 ? 0 : 1;
+                    break;
+                case 1:
+                    _customizeSection = 2;
+                    _customizeIndex = _customizeIndex == 0 ? 1 : 4;
+                    break;
+                case 2 when _customizeIndex < 6:
+                    _customizeIndex += 6;
+                    break;
+                case 2:
+                    _customizeSection = 3;
+                    _customizeIndex = 0;
+                    break;
+                default:
+                    return;
+            }
+        }
         _audio.Play(AudioCue.Select);
     }
 

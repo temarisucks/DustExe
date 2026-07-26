@@ -92,10 +92,87 @@ internal sealed partial class GameForm
         return cursor;
     }
 
-    private bool CanHollowSee(Hollow hollow, PointF target) =>
-        CanHollowSeeFrom(hollow, hollow.VisualCell, target, hollow.HasSight);
+    private Point? FindTriangleMemberPathStep(
+        Hollow hollow,
+        TriangleMember member,
+        Point target)
+    {
+        if (_maze is null || member.Cell == target) return null;
+        var visited = new bool[_maze.Width, _maze.Height];
+        var previous = new Point[_maze.Width, _maze.Height];
+        var queue = new Queue<Point>();
+        queue.Enqueue(member.Cell);
+        visited[member.Cell.X, member.Cell.Y] = true;
+        var found = false;
+        while (queue.Count > 0 && !found)
+        {
+            var cell = queue.Dequeue();
+            foreach (var direction in AllDirections)
+            {
+                if (!_maze.CanMove(cell, direction)) continue;
+                var next = _maze.Move(cell, direction);
+                if (IsCellConcealed(next) ||
+                    IsRoomDecorationBlockingCell(next) ||
+                    visited[next.X, next.Y])
+                    continue;
+                if (IsTriangleMemberCellOccupied(hollow, member, next) &&
+                    !(hollow.TriangleReforming && next == hollow.TriangleRallyCell))
+                    continue;
+                visited[next.X, next.Y] = true;
+                previous[next.X, next.Y] = cell;
+                if (next == target)
+                {
+                    found = true;
+                    break;
+                }
+                queue.Enqueue(next);
+            }
+        }
+        if (!found) return null;
+        var cursor = target;
+        while (previous[cursor.X, cursor.Y] != member.Cell)
+            cursor = previous[cursor.X, cursor.Y];
+        return cursor;
+    }
 
-    private bool CanHollowSeeFrom(Hollow hollow, PointF from, PointF target, bool retainSight = false)
+    private bool IsTriangleMemberCellOccupied(
+        Hollow parent,
+        TriangleMember self,
+        Point cell) =>
+        _hollows.Any(other => other != parent &&
+            (other.Cell == cell || other.TargetCell == cell ||
+             other.TriangleSplit && other.TriangleMembers.Any(member =>
+                 member.Cell == cell || member.TargetCell == cell))) ||
+        parent.TriangleMembers.Any(member => member != self &&
+            (member.Cell == cell || member.TargetCell == cell)) ||
+        _sentries.Any(sentry => sentry.Cell == cell);
+
+    private bool CanHollowSee(Hollow hollow, PointF target) =>
+        CanHollowBodySee(hollow, target, hollow.HasSight);
+
+    private bool CanHollowBodySee(Hollow hollow, PointF target, bool retainSight)
+    {
+        if (hollow.Type != HollowType.Triangle || !hollow.TriangleSplit ||
+            hollow.TriangleMembers.Count != 3)
+            return CanHollowSeeFrom(
+                hollow, hollow.VisualCell, target, retainSight);
+        return hollow.TriangleMembers.Any(member => CanHollowSeeFrom(
+            hollow, member.VisualCell, target, retainSight, member.FacingAngle));
+    }
+
+    private bool IsHollowBodyExposed(Hollow hollow) =>
+        hollow.Type == HollowType.Triangle && hollow.TriangleSplit &&
+        hollow.TriangleMembers.Count == 3
+            ? hollow.TriangleMembers.Any(member =>
+                !IsPositionConcealed(member.VisualCell))
+            : !IsPositionConcealed(hollow.VisualCell);
+
+    private bool CanHollowSeeFrom(
+        Hollow hollow,
+        PointF from,
+        PointF target,
+        bool retainSight = false,
+        float? facingAngle = null)
     {
         var dx = target.X - from.X;
         var dy = target.Y - from.Y;
@@ -106,7 +183,8 @@ internal sealed partial class GameForm
         if (distanceSquared > retainedRange * retainedRange) return false;
         var targetAngle = MathF.Atan2(dy, dx);
         var retainedField = HollowFieldOfView(hollow, retainSight);
-        if (Math.Abs(NormalizeAngle(targetAngle - hollow.FacingAngle)) > retainedField / 2) return false;
+        if (Math.Abs(NormalizeAngle(targetAngle - (facingAngle ?? hollow.FacingAngle))) >
+            retainedField / 2) return false;
         if (HollowIgnoresVisionWalls(hollow)) return true;
 
         var distance = MathF.Sqrt(distanceSquared);
@@ -225,6 +303,12 @@ internal sealed partial class GameForm
     }
 
     private bool IsOccupiedByOtherHollow(Hollow self, Point cell) =>
-        _hollows.Any(other => other != self && (other.Cell == cell || other.TargetCell == cell)) ||
+        _hollows.Any(other => other != self &&
+            HollowOccupiesCell(other, cell)) ||
         _sentries.Any(sentry => sentry.Cell == cell);
+
+    private static bool HollowOccupiesCell(Hollow hollow, Point cell) =>
+        hollow.Cell == cell || hollow.TargetCell == cell ||
+        hollow.TriangleSplit && hollow.TriangleMembers.Any(member =>
+            member.Cell == cell || member.TargetCell == cell);
 }

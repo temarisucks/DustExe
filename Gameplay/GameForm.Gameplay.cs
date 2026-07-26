@@ -23,8 +23,7 @@ internal sealed partial class GameForm
             {
                 _level = 1;
                 _survivorDifficultyOffset = 0;
-                _shopProtectionCharges = 0;
-                _shopRepairReserve = 0;
+                ResetInventoryRunState();
             }
             _survivorDifficultyPenaltyPending = false;
         }
@@ -74,6 +73,10 @@ internal sealed partial class GameForm
             _startedAt = DateTime.Now;
             _mode = ScreenMode.Playing;
             BeginAchievementRun();
+            // Present the physical contract before the drone is released into
+            // a new plate. Offline runs hold here; an online plate remains live
+            // and clearly retains remote authority while the file is open.
+            OpenMissionDossier(playSound: false);
             _audio.PlayMusic();
         }
         catch (OperationCanceledException)
@@ -129,6 +132,7 @@ internal sealed partial class GameForm
         _pendingWin = false;
         _warningFlash = 0;
         _warningSoundCooldown = 0;
+        CloseInventory(playSound: false);
         ResetPerkRunState();
         SetupMission();
         SpawnHollows();

@@ -12,6 +12,7 @@ internal sealed partial class GameForm
         DrawChamber(g);
         DrawTelemetry(g);
         if (_mode == ScreenMode.Playing && _missionDossierOpen) DrawMissionDossier(g);
+        else if (_mode == ScreenMode.Playing && _inventoryOpen) DrawPlayerInventory(g);
         else if (_mode == ScreenMode.Won) DrawOutcome(g);
         else if (_mode == ScreenMode.Failed) DrawFailureOverlay(g);
     }

@@ -225,7 +225,7 @@ internal sealed partial class GameForm : Form
             Invalidate();
             return;
         }
-        if (_mode == ScreenMode.Playing && _missionDossierOpen &&
+        if (_mode == ScreenMode.Playing && (_missionDossierOpen || _inventoryOpen) &&
             !IsOnlineGameplayActive)
         {
             // The paper file is a true safe pause: no enemies, mission timers,
