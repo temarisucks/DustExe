@@ -302,10 +302,16 @@ internal sealed partial class GameForm
         return angle;
     }
 
-    private bool IsOccupiedByOtherHollow(Hollow self, Point cell) =>
-        _hollows.Any(other => other != self &&
-            HollowOccupiesCell(other, cell)) ||
-        _sentries.Any(sentry => sentry.Cell == cell);
+    private bool IsOccupiedByOtherHollow(Hollow self, Point cell)
+    {
+        var occupiedByEnemy = _hollows.Any(other => other != self &&
+                                  HollowOccupiesCell(other, cell)) ||
+                              _sentries.Any(sentry => sentry.Cell == cell);
+        // Stars have to make actual body contact to transfer their upgrade.
+        // Let them enter an occupied hostile cell; swept contact catches the
+        // approach and ordinary movement takes them back out afterward.
+        return self.Type != HollowType.Star && occupiedByEnemy;
+    }
 
     private static bool HollowOccupiesCell(Hollow hollow, Point cell) =>
         hollow.Cell == cell || hollow.TargetCell == cell ||

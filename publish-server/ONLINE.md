@@ -6,12 +6,14 @@ port. The lobby creator is the simulation authority for that run, while the
 server retains a recent checkpoint so another player can take over if the host
 does not reconnect.
 
-Current clients use gameplay protocol version 4. Alongside compact per-player
+Current clients use gameplay protocol version 5. Alongside compact per-player
 objective state and guest-side Hollow presentation smoothing, its checkpoints
-carry the expanded enemy roster, empowerment timers, hostile projectiles, and
-walls destroyed by empowered Turrets. Everyone in one lobby should use the same
-published `Dust.exe`; protocol-1, protocol-2, and protocol-3 clients intentionally reject
-version-4 world checkpoints instead of applying an incomplete mission state.
+carry the expanded enemy roster, hostile projectiles, destroyed walls, and each
+player's carried supplies. Version 5 also gives the Aegis input its immediate,
+host-authoritative nearest-enemy discharge semantics. Everyone in one lobby
+should use the same published `Dust.exe`; protocol-1 through protocol-4 clients
+intentionally reject version-5 world checkpoints instead of interpreting the
+same defensive input as an obsolete next-hit ward.
 
 The relay uses a bounded outbound queue for every peer. Reliable inputs and
 control messages remain ordered, while an unsent world snapshot is replaced by

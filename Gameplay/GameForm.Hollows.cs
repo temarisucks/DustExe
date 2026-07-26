@@ -185,23 +185,52 @@ internal sealed partial class GameForm
 
     private void UpdateEnemyEmpowerment()
     {
-        const float radiusSquared = 36f;
         var stars = _hollows.Where(hollow => hollow.Type == HollowType.Star).ToArray();
         foreach (var star in stars)
         {
             foreach (var hollow in _hollows)
             {
-                // A Star never powers itself. Two distinct Stars may power one
-                // another, which unlocks their advanced attack package.
+                // A Star never powers itself. Two distinct Stars can still
+                // power one another, but only when their physical bodies meet.
                 if (ReferenceEquals(star, hollow) ||
-                    PerkDistanceSquared(star.VisualCell, hollow.VisualCell) > radiusSquared)
+                    !StarTouchesHollow(star, hollow))
                     continue;
                 hollow.Empowered = true;
             }
             foreach (var sentry in _sentries)
-                if (PerkDistanceSquared(star.VisualCell, sentry.Cell) <= radiusSquared)
+                if (StarTouchesSentry(star, sentry))
                     sentry.Empowered = true;
         }
+    }
+
+    private const float StarBodyRadius = .27f;
+
+    private static bool StarTouchesHollow(Hollow star, Hollow target)
+    {
+        var targetBodyRadius = target.Type == HollowType.Triangle && target.TriangleSplit
+            ? .20f
+            : .27f;
+        var contactDistance = StarBodyRadius + targetBodyRadius;
+        var contactDistanceSquared = contactDistance * contactDistance;
+        var previousBodies = PreviousTriangleMemberPositions(target);
+        var currentBodies = TriangleMemberPositions(target);
+        for (var index = 0; index < currentBodies.Length; index++)
+            if (SweptSeparationSquared(
+                    star.PreviousVisualCell, star.VisualCell,
+                    previousBodies[index], currentBodies[index]) <=
+                contactDistanceSquared)
+                return true;
+        return false;
+    }
+
+    private static bool StarTouchesSentry(Hollow star, Sentry sentry)
+    {
+        if (sentry.Phase == SentryPhase.Buried) return false;
+        const float sentryBodyRadius = .31f;
+        var contactDistance = StarBodyRadius + sentryBodyRadius;
+        return SweptSeparationSquared(
+                   star.PreviousVisualCell, star.VisualCell,
+                   sentry.Cell, sentry.Cell) <= contactDistance * contactDistance;
     }
 
     private void UpdateCameraHollow(Hollow camera, float deltaTime)
@@ -554,8 +583,8 @@ internal sealed partial class GameForm
         }
 
         // The parent remains a compact authority/index record while its three
-        // children own movement and contact. Its centroid keeps distance-based
-        // systems (camera response and Star empowerment) representative.
+        // children own movement and contact. Its centroid keeps camera-response
+        // distance checks representative; Star contact tests each child body.
         hollow.PreviousVisualCell = hollow.VisualCell;
         hollow.VisualCell = new PointF(
             hollow.TriangleMembers.Average(member => member.VisualCell.X),

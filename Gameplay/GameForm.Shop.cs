@@ -155,7 +155,7 @@ internal sealed partial class GameForm
         {
             Kind = ShopItemKind.AegisFuse,
             Name = "AEGIS FUSE",
-            Description = "A carried fuse. Arm it to cancel the next damaging hit.",
+            Description = "A carried fuse. Discharge it to erase the nearest hostile.",
             Price = 145,
             StartingStock = 2,
             Stock = 2
@@ -394,7 +394,7 @@ internal sealed partial class GameForm
             case 0:
                 _shopPage = ShopPage.Buy;
                 _shopListSelection = 0;
-                StartShopDialogue("Repairs, wards, little mercies. Limited stock. Choose carefully.");
+                StartShopDialogue("Repairs, discharges, little mercies. Limited stock. Choose carefully.");
                 break;
             case 1:
                 _shopPage = ShopPage.Sell;
@@ -475,7 +475,7 @@ internal sealed partial class GameForm
                 StartShopDialogue("Gel sealed for transit. It waits for your command, not your wound.");
                 break;
             case ShopItemKind.AegisFuse:
-                StartShopDialogue("Fuse transferred. Arm it before the dark reaches you.");
+                StartShopDialogue("Fuse transferred. Point nowhere. It will choose what dies.");
                 break;
         }
         SaveSettings();
@@ -551,19 +551,6 @@ internal sealed partial class GameForm
         _missionNotice = $"SALVAGE / {SalvageName(salvage.Kind)}";
         _missionNoticeTimer = 2.1f;
         _audio.Play(AudioCue.Collect);
-    }
-
-    private bool TryConsumeShopProtection()
-    {
-        if (!_shopProtectionArmed) return false;
-        _shopProtectionArmed = false;
-        _invulnerability = Math.Max(_invulnerability, 1.25f);
-        _impactCell = new Point((int)MathF.Round(_visualCell.X), (int)MathF.Round(_visualCell.Y));
-        _impactPulse = 1;
-        _missionNotice = "AEGIS FUSE SPENT / DAMAGE NULL";
-        _missionNoticeTimer = 2.2f;
-        _audio.Play(AudioCue.Confirm);
-        return true;
     }
 
     private static string SalvageName(SalvageKind kind) => kind switch

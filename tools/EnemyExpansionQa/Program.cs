@@ -176,22 +176,128 @@ internal static class Program
             "Camera distress did not interrupt a nearby patrol.");
 
         var star = FindHollow(hollows, "Star");
-        foreach (var hollow in hollows.Cast<object>())
-            SetProperty(hollow, "VisualCell", new PointF(1, 1));
-        SetProperty(star, "VisualCell", new PointF(20, 20));
+        var completeHollowRoster = hollows.Cast<object>().ToArray();
+        hollows.Clear();
+        hollows.Add(star);
+        hollows.Add(square);
+        Point? starApproachCell = null;
+        Point? starContactCell = null;
+        var sentryCells = ((IEnumerable)FieldObject(gameType, form, "_sentries"))
+            .Cast<object>()
+            .Select(sentry => Property<Point>(sentry, "Cell"))
+            .ToHashSet();
+        for (var y = 0; y < Property<int>(maze, "Height") && starApproachCell is null; y++)
+        for (var x = 0; x < Property<int>(maze, "Width") && starApproachCell is null; x++)
+        foreach (var direction in Enum.GetValues(directionType).Cast<object>())
+        {
+            if (!(bool)mazeType.GetMethod("CanMove")!
+                    .Invoke(maze, [new Point(x, y), direction])!)
+                continue;
+            var contact = direction.ToString() switch
+            {
+                "Up" => new Point(x, y - 1),
+                "Right" => new Point(x + 1, y),
+                "Down" => new Point(x, y + 1),
+                _ => new Point(x - 1, y)
+            };
+            var approach = new Point(x, y);
+            if (sentryCells.Contains(approach) || sentryCells.Contains(contact) ||
+                mazeType.GetMethod("GetRoomAt")!.Invoke(maze, [approach]) is not null ||
+                mazeType.GetMethod("GetRoomAt")!.Invoke(maze, [contact]) is not null)
+                continue;
+            PlaceHollow(star, approach);
+            PlaceHollow(square, contact);
+            var next = (Point?)Invoke(gameType, form,
+                "FindNextPathStep", star, contact);
+            if (next != contact) continue;
+            starApproachCell = approach;
+            starContactCell = contact;
+            break;
+        }
+        Require(starApproachCell.HasValue && starContactCell.HasValue,
+            "A Star could not route into an occupied hostile cell to make contact.");
+
+        var approachCell = starApproachCell.GetValueOrDefault();
+        var contactCell = starContactCell.GetValueOrDefault();
+        PlaceHollow(star, approachCell);
+        PlaceHollow(square, contactCell);
+        SetProperty(star, "Empowered", false);
+        SetProperty(square, "Empowered", false);
         Invoke(gameType, form, "UpdateEnemyEmpowerment");
         Require(!Property<bool>(star, "Empowered"),
             "A solitary Star empowered itself.");
-        SetProperty(square, "VisualCell", new PointF(21, 20));
+        Require(!Property<bool>(square, "Empowered"),
+            "A Star empowered an adjacent enemy without physically touching it.");
+
+        Invoke(gameType, form, "StartHollowMove", star, contactCell);
+        Invoke(gameType, form, "AdvanceHollow", star,
+            Property<float>(star, "MoveDuration") * .5f);
         Invoke(gameType, form, "UpdateEnemyEmpowerment");
         Require(Property<bool>(square, "Empowered"),
-            "A nearby Square was not empowered by a Star.");
+            "A moving Star failed to empower the Square when their bodies touched.");
         Require((int)Invoke(gameType, form, "HollowContactDamage", square)! == 2,
             "An empowered Square did not deal two integrity hits.");
-        SetProperty(star, "VisualCell", new PointF(40, 30));
+        PlaceHollow(star, new Point(-20, -20));
         Invoke(gameType, form, "UpdateEnemyEmpowerment");
         Require(Property<bool>(square, "Empowered"),
-            "Star empowerment expired after the enemy left the Star's radius.");
+            "Star empowerment expired after physical contact ended.");
+
+        var qaSentries = (IList)FieldObject(gameType, form, "_sentries");
+        if (qaSentries.Count > 0)
+        {
+            var contactSentry = qaSentries[0]!;
+            SetProperty(contactSentry, "Empowered", false);
+            SetProperty(contactSentry, "Phase", Enum.Parse(
+                assembly.GetType("Dust.SentryPhase", true)!, "Scanning"));
+            PlaceHollow(star, Property<Point>(contactSentry, "Cell"));
+            Invoke(gameType, form, "UpdateEnemyEmpowerment");
+            Require(Property<bool>(contactSentry, "Empowered"),
+                "Physical Star contact did not permanently empower a Turret.");
+            SetProperty(contactSentry, "Empowered", false);
+            SetProperty(contactSentry, "Phase", Enum.Parse(
+                assembly.GetType("Dust.SentryPhase", true)!, "Buried"));
+            Invoke(gameType, form, "UpdateEnemyEmpowerment");
+            Require(!Property<bool>(contactSentry, "Empowered"),
+                "A Star touched and empowered a fully buried Turret.");
+            SetProperty(contactSentry, "Phase", Enum.Parse(
+                assembly.GetType("Dust.SentryPhase", true)!, "Scanning"));
+        }
+
+        PlaceHollow(star, contactCell);
+        SetProperty(star, "Empowered", false);
+        var secondStar = Activator.CreateInstance(hollowType)!;
+        SetProperty(secondStar, "Type", Enum.Parse(hollowKind, "Star"));
+        PlaceHollow(secondStar, contactCell);
+        SetProperty(secondStar, "Empowered", false);
+        hollows.Add(secondStar);
+        Invoke(gameType, form, "UpdateEnemyEmpowerment");
+        Require(Property<bool>(star, "Empowered") &&
+                Property<bool>(secondStar, "Empowered"),
+            "Two touching Stars did not empower one another.");
+        hollows.Remove(secondStar);
+
+        PlaceHollow(triangle, new Point(contactCell.X + 4, contactCell.Y + 4));
+        SetProperty(triangle, "Empowered", false);
+        Invoke(gameType, form, "BeginTriangleSplit", triangle);
+        var splitMembers = ((IEnumerable)Property(triangle, "TriangleMembers"))
+            .Cast<object>()
+            .OrderBy(member => Property<int>(member, "Index"))
+            .ToArray();
+        PlaceTriangleMember(splitMembers[0], contactCell);
+        PlaceTriangleMember(splitMembers[1], new Point(contactCell.X + 6, contactCell.Y));
+        PlaceTriangleMember(splitMembers[2], new Point(contactCell.X, contactCell.Y + 6));
+        PlaceHollow(star, contactCell);
+        hollows.Add(triangle);
+        Invoke(gameType, form, "UpdateEnemyEmpowerment");
+        Require(Property<bool>(triangle, "Empowered"),
+            "A Star touching one split Triangle shard did not empower its parent enemy.");
+        SetProperty(triangle, "TriangleRallyCell",
+            new Point(contactCell.X + 4, contactCell.Y + 4));
+        Invoke(gameType, form, "CompleteTriangleReform", triangle);
+
+        hollows.Clear();
+        foreach (var hollow in completeHollowRoster)
+            hollows.Add(hollow);
 
         SetProperty(star, "State", Enum.Parse(
             assembly.GetType("Dust.HollowState", true)!, "Chase"));
@@ -203,23 +309,6 @@ internal static class Program
                 Property<float>(star, "SearchTimer") < 0,
             "A Star abandoned pursuit immediately after losing line of sight.");
         SetField(gameType, form, "_camouflageTimer", 0f);
-
-        SetProperty(star, "VisualCell", new PointF(20, 20));
-        var secondStar = Activator.CreateInstance(hollowType)!;
-        SetProperty(secondStar, "Type", Enum.Parse(hollowKind, "Star"));
-        SetProperty(secondStar, "Cell", new Point(21, 20));
-        SetProperty(secondStar, "TargetCell", new Point(21, 20));
-        SetProperty(secondStar, "VisualCell", new PointF(21, 20));
-        SetProperty(secondStar, "PreviousVisualCell", new PointF(21, 20));
-        SetProperty(secondStar, "MoveFrom", new PointF(21, 20));
-        SetProperty(secondStar, "MoveTo", new PointF(21, 20));
-        SetProperty(secondStar, "MoveProgress", 1f);
-        hollows.Add(secondStar);
-        Invoke(gameType, form, "UpdateEnemyEmpowerment");
-        Require(Property<bool>(star, "Empowered") &&
-                Property<bool>(secondStar, "Empowered"),
-            "Two distinct Stars did not empower one another.");
-        hollows.Remove(secondStar);
 
         var width = Property<int>(maze, "Width");
         var height = Property<int>(maze, "Height");
@@ -290,8 +379,8 @@ internal static class Program
         SaveFrame(gameType, form, Path.Combine(outputDirectory, "new-enemies.png"));
 
         var snapshot = Invoke(gameType, form, "BuildOnlineSnapshot")!;
-        Require(Property<int>(snapshot, "ProtocolVersion") == 4,
-            "Expanded enemy and inventory checkpoints were not isolated behind protocol 4.");
+        Require(Property<int>(snapshot, "ProtocolVersion") == 5,
+            "Expanded enemy and inventory checkpoints were not isolated behind protocol 5.");
         var snapshotTriangle = ((IEnumerable)Property(snapshot, "Hollows"))
             .Cast<object>().First(value => Property<int>(value, "Type") == 3);
         Require(((IEnumerable)Property(snapshotTriangle, "TriangleMembers"))
@@ -380,7 +469,7 @@ internal static class Program
             $"{wallBits.Length} base64 characters for destroyed walls{Environment.NewLine}");
         Console.WriteLine(
             "Enemy expansion QA passed: independent Triangle split/reform, junction Cameras, " +
-            "permanent Star empowerment and pursuit memory, compact dynamic-wall checkpoint, " +
+            "permanent contact-only Star empowerment and pursuit memory, compact dynamic-wall checkpoint, " +
             "and rendering.");
     }
 
@@ -485,6 +574,32 @@ internal static class Program
     private static object FindHollow(IList hollows, string type) =>
         hollows.Cast<object>().First(hollow =>
             Property(hollow, "Type").ToString() == type);
+
+    private static void PlaceHollow(object hollow, Point cell)
+    {
+        var visual = new PointF(cell.X, cell.Y);
+        SetProperty(hollow, "Cell", cell);
+        SetProperty(hollow, "TargetCell", cell);
+        SetProperty(hollow, "PreviousCell", cell);
+        SetProperty(hollow, "VisualCell", visual);
+        SetProperty(hollow, "PreviousVisualCell", visual);
+        SetProperty(hollow, "MoveFrom", visual);
+        SetProperty(hollow, "MoveTo", visual);
+        SetProperty(hollow, "MoveProgress", 1f);
+    }
+
+    private static void PlaceTriangleMember(object member, Point cell)
+    {
+        var visual = new PointF(cell.X, cell.Y);
+        SetProperty(member, "Cell", cell);
+        SetProperty(member, "TargetCell", cell);
+        SetProperty(member, "PreviousCell", cell);
+        SetProperty(member, "VisualCell", visual);
+        SetProperty(member, "PreviousVisualCell", visual);
+        SetProperty(member, "MoveFrom", visual);
+        SetProperty(member, "MoveTo", visual);
+        SetProperty(member, "MoveProgress", 1f);
+    }
 
     private static void SaveFrame(Type gameType, Form form, string path)
     {

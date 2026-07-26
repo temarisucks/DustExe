@@ -111,7 +111,6 @@ internal sealed class OnlineRemotePlayer
     public int FramePatchInventory { get; set; }
     public int ReconstructionGelInventory { get; set; }
     public int ShopProtectionCharges { get; set; }
-    public bool ShopProtectionArmed { get; set; }
     public long ShopTransactionRevision { get; set; }
     public string ShopMessage { get; set; } = string.Empty;
     public int ShopCue { get; set; }
@@ -123,7 +122,7 @@ internal readonly record struct OnlineMoveIntent(long Sequence, Direction Direct
 
 internal sealed class OnlineWorldSnapshot
 {
-    public int ProtocolVersion { get; set; } = 4;
+    public int ProtocolVersion { get; set; } = 5;
     public long Tick { get; set; }
     public long WorldRevision { get; set; }
     public long AuthorityRevision { get; set; }
@@ -194,7 +193,6 @@ internal sealed class OnlinePlayerSnapshot
     public int FramePatchInventory { get; set; }
     public int ReconstructionGelInventory { get; set; }
     public int ShopProtectionCharges { get; set; }
-    public bool ShopProtectionArmed { get; set; }
     public long ShopTransactionRevision { get; set; }
     public string ShopMessage { get; set; } = string.Empty;
     public int ShopCue { get; set; }

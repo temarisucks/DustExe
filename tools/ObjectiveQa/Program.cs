@@ -236,17 +236,57 @@ internal static class Program
                 Field<int>(gameType, form, "_reconstructionGelInventory") == 0,
             "Reconstruction gel did not restore remaining integrity on demand.");
 
+        var hollows = (IList)FieldObject(gameType, form, "_hollows");
+        var sentries = (IList)FieldObject(gameType, form, "_sentries");
+        hollows.Clear();
+        sentries.Clear();
+        SetView(gameType, form, new PointF(5, 5), new PointF(5, 5));
+
+        // The Triangle centroid is deliberately far away. Its nearest real
+        // member must still beat the Square and Sentry as the acquired target.
+        var splitTriangle = CreateTestHollow(gameAssembly, "Triangle",
+            new PointF(20, 20), [new PointF(5.2f, 5), new PointF(18, 18), new PointF(19, 19)]);
+        var square = CreateTestHollow(gameAssembly, "Square", new PointF(6, 5));
+        hollows.Add(splitTriangle);
+        hollows.Add(square);
+        sentries.Add(CreateTestSentry(gameAssembly, new Point(5, 6), "Scanning"));
+
         SetField(gameType, form, "_shopProtectionCharges", 1);
-        SetField(gameType, form, "_shopProtectionArmed", false);
-        var armed = (bool)gameType.GetMethod(
+        var discharged = (bool)gameType.GetMethod(
             "TryActivateDefensiveItem", InstanceFlags)!.Invoke(form, null)!;
-        Require(armed && Field<bool>(gameType, form, "_shopProtectionArmed") &&
-                Field<int>(gameType, form, "_shopProtectionCharges") == 0,
-            "A carried Aegis fuse was not manually armed.");
-        var absorbed = (bool)gameType.GetMethod(
-            "TryConsumeShopProtection", InstanceFlags)!.Invoke(form, null)!;
-        Require(absorbed && !Field<bool>(gameType, form, "_shopProtectionArmed"),
-            "An armed Aegis fuse did not cancel exactly one hit.");
+        Require(discharged && Field<int>(gameType, form, "_shopProtectionCharges") == 0 &&
+                hollows.Count == 1 && ReferenceEquals(hollows[0], square) && sentries.Count == 1,
+            "Aegis did not erase the nearest real Triangle member as one complete enemy.");
+
+        // A fully buried Sentry has no physical target. A failed acquisition
+        // must leave the carried fuse untouched.
+        hollows.Clear();
+        sentries.Clear();
+        sentries.Add(CreateTestSentry(gameAssembly, new Point(5, 5), "Buried"));
+        SetField(gameType, form, "_shopProtectionCharges", 1);
+        gameType.GetMethod("TryActivateDefensiveItem", InstanceFlags)!
+            .Invoke(form, null);
+        Require(Field<int>(gameType, form, "_shopProtectionCharges") == 1 &&
+                sentries.Count == 1,
+            "Aegis consumed a fuse despite having no exposed hostile target.");
+
+        // The host-side remote-player resolver owns guest consumption and the
+        // shared enemy removal; a guest cannot destroy an enemy locally.
+        sentries.Clear();
+        hollows.Add(CreateTestHollow(gameAssembly, "Camera", new PointF(8, 5)));
+        var remoteType = gameAssembly.GetType("Dust.OnlineRemotePlayer", true)!;
+        var remote = Activator.CreateInstance(remoteType)!;
+        SetProperty(remote, "PlayerId", "aegis-guest");
+        SetProperty(remote, "Username", "AEGIS GUEST");
+        SetProperty(remote, "Connected", true);
+        SetProperty(remote, "AppearanceReady", true);
+        SetProperty(remote, "VisualCell", new PointF(5, 5));
+        SetProperty(remote, "ShopProtectionCharges", 1);
+        gameType.GetMethod("ResolveOnlineDefensiveItemActivation", InstanceFlags)!
+            .Invoke(form, [remote]);
+        Require(Property<int>(remote, "ShopProtectionCharges") == 0 && hollows.Count == 0 &&
+                Property<string>(remote, "ShopMessage").Contains("CAMERA ERASED"),
+            "The host-authoritative guest Aegis discharge did not remove its nearest enemy.");
 
         var perkIdType = gameAssembly.GetType("Dust.PerkId", true)!;
         var allPerks = Enum.GetValues(perkIdType);
@@ -264,12 +304,16 @@ internal static class Program
         SetField(gameType, form, "_reconstructionGelInventory", 1);
         SetField(gameType, form, "_shopProtectionCharges", 2);
         SetField(gameType, form, "_inventoryOpen", true);
+        SetField(gameType, form, "_inventorySelection", 2);
+        hollows.Add(CreateTestHollow(gameAssembly, "Star", new PointF(6, 5)));
         SaveFrame(gameType, form,
             Path.Combine(outputDirectory, "player-inventory.png"));
         SetField(gameType, form, "_inventoryOpen", false);
         SetField(gameType, form, "_framePatchInventory", 0);
         SetField(gameType, form, "_reconstructionGelInventory", 0);
         SetField(gameType, form, "_shopProtectionCharges", 0);
+        hollows.Clear();
+        sentries.Clear();
     }
 
     private static void VerifySpatialMenuAndOverlayInput(
@@ -310,6 +354,63 @@ internal static class Program
                 $"{Field<int>(gameType, form, "_runSettingsSelection")} instead of {expected}.");
         }
 
+        var moveRunHorizontal = gameType.GetMethod(
+            "MoveRunSettingsHorizontal", InstanceFlags)!;
+        foreach (var (from, direction, expected) in new[]
+                 {
+                     (0, 1, 4), (4, -1, 0),
+                     (1, 1, 6), (6, -1, 1),
+                     (2, 1, 8), (8, -1, 2),
+                     (10, 1, 9), (9, -1, 10),
+                     (12, 1, 11), (11, -1, 12)
+                 })
+        {
+            SetField(gameType, form, "_runSettingsSelection", from);
+            moveRunHorizontal.Invoke(form, [direction]);
+            Require(Field<int>(gameType, form, "_runSettingsSelection") == expected,
+                $"Run-settings horizontal focus moved {from} -> " +
+                $"{Field<int>(gameType, form, "_runSettingsSelection")} instead of {expected}.");
+        }
+
+        var runSettings = FieldObject(gameType, form, "_runSettings");
+        var snapshotRunSettings = runSettings.GetType().GetMethod("Snapshot", InstanceFlags)!;
+        var handleRunSettingsKey = gameType.GetMethod("HandleRunSettingsKey", InstanceFlags)!;
+        foreach (var selection in Enumerable.Range(0, 13))
+        {
+            foreach (var key in new[] { Keys.Left, Keys.Right })
+            {
+                SetField(gameType, form, "_runSettingsSelection", selection);
+                var before = snapshotRunSettings.Invoke(runSettings, null);
+                handleRunSettingsKey.Invoke(form, [new KeyEventArgs(key)]);
+                var after = snapshotRunSettings.Invoke(runSettings, null);
+                Require(Equals(before, after),
+                    $"{key} changed run-setting values from focus index {selection}.");
+            }
+        }
+
+        foreach (var (selection, propertyName) in new[]
+                 {
+                     (0, "MapSize"),
+                     (1, "Strictness"),
+                     (2, "HollowAmount"),
+                     (3, "HollowTypes")
+                 })
+        {
+            var originalValue = Property<object>(runSettings, propertyName);
+            SetField(gameType, form, "_runSettingsSelection", selection);
+            handleRunSettingsKey.Invoke(form, [new KeyEventArgs(Keys.Enter)]);
+            Require(!Equals(Property<object>(runSettings, propertyName), originalValue),
+                $"Enter did not change the focused {propertyName} value.");
+            SetProperty(runSettings, propertyName, originalValue);
+        }
+
+        var originalScaling = Property<bool>(runSettings, "DifficultyScaling");
+        SetField(gameType, form, "_runSettingsSelection", 10);
+        handleRunSettingsKey.Invoke(form, [new KeyEventArgs(Keys.Space)]);
+        Require(Property<bool>(runSettings, "DifficultyScaling") != originalScaling,
+            "Space did not toggle the focused difficulty-scaling option.");
+        SetProperty(runSettings, "DifficultyScaling", originalScaling);
+
         var modeField = gameType.GetField("_mode", InstanceFlags)!;
         var playingMode = Enum.Parse(modeField.FieldType, "Playing");
         var shopMode = Enum.Parse(modeField.FieldType, "Shop");
@@ -337,21 +438,24 @@ internal static class Program
         equipped.Add(Enum.Parse(gameAssembly.GetType("Dust.PerkId", true)!, "Camouflage"));
         SetField(gameType, form, "_inventoryOpen", true);
         SetField(gameType, form, "_inventorySelection", 0);
+        var hollows = (IList)FieldObject(gameType, form, "_hollows");
+        hollows.Clear();
+        hollows.Add(CreateTestHollow(gameAssembly, "Star", new PointF(6, 5)));
         SetField(gameType, form, "_shopProtectionCharges", 1);
-        SetField(gameType, form, "_shopProtectionArmed", false);
         gameType.GetMethod("HandleInventoryKey", InstanceFlags)!
             .Invoke(form, [new KeyEventArgs(Keys.J)]);
         Require(Field<int>(gameType, form, "_inventorySelection") == 2 &&
                 Field<int>(gameType, form, "_shopProtectionCharges") == 0 &&
-                Field<bool>(gameType, form, "_shopProtectionArmed"),
-            "J did not arm the Aegis channel while an active perk owned Space.");
+                hollows.Count == 0,
+            "J did not discharge Aegis at the nearest enemy while an active perk owned Space.");
+        hollows.Add(CreateTestHollow(gameAssembly, "Star", new PointF(6, 5)));
         SetField(gameType, form, "_shopProtectionCharges", 1);
-        SetField(gameType, form, "_shopProtectionArmed", false);
         gameType.GetMethod("HandleInventoryKey", InstanceFlags)!
             .Invoke(form, [new KeyEventArgs(Keys.Space)]);
         Require(Field<int>(gameType, form, "_shopProtectionCharges") == 1 &&
-                !Field<bool>(gameType, form, "_shopProtectionArmed"),
+                hollows.Count == 1,
             "Space bypassed the active-perk/Aegis key split inside inventory.");
+        hollows.Clear();
         equipped.Clear();
         foreach (var perk in originalPerks) equipped.Add(perk);
         SetField(gameType, form, "_inventoryOpen", false);
@@ -490,14 +594,14 @@ internal static class Program
 
         var snapshot = gameType.GetMethod("BuildOnlineSnapshot", InstanceFlags)!
             .Invoke(form, null)!;
-        Require(Property<int>(snapshot, "ProtocolVersion") == 4,
-            "The per-player inventory protocol was not bumped to version 4.");
+        Require(Property<int>(snapshot, "ProtocolVersion") == 5,
+            "The immediate Aegis discharge semantics were not isolated behind protocol 5.");
         var localPlayer = ((IEnumerable)Property<object>(snapshot, "Players"))
             .Cast<object>()
             .First(player => Property<string>(player, "PlayerId") == "player-a");
         Require(localPlayer.GetType().GetProperty("FramePatchInventory") is not null &&
                 localPlayer.GetType().GetProperty("ReconstructionGelInventory") is not null &&
-                localPlayer.GetType().GetProperty("ShopProtectionArmed") is not null,
+                localPlayer.GetType().GetProperty("ShopProtectionCharges") is not null,
             "The online checkpoint omitted per-player carried supply state.");
         var snapshotDirectives = ((IEnumerable)Property<object>(
             snapshot, "FieldDirectives")).Cast<object>().ToArray();
@@ -748,6 +852,67 @@ internal static class Program
         SetField(gameType, form, "_playerCell", droneCell);
         SetField(gameType, form, "_playerPreviousCell", droneCell);
         SetField(gameType, form, "_moveProgress", 1f);
+    }
+
+    private static object CreateTestHollow(
+        Assembly gameAssembly,
+        string typeName,
+        PointF visualCell,
+        IReadOnlyList<PointF>? triangleMembers = null)
+    {
+        var hollowType = gameAssembly.GetType("Dust.Hollow", true)!;
+        var hollow = Activator.CreateInstance(hollowType)!;
+        var cell = new Point(
+            (int)MathF.Round(visualCell.X),
+            (int)MathF.Round(visualCell.Y));
+        SetProperty(hollow, "Type", Enum.Parse(
+            gameAssembly.GetType("Dust.HollowType", true)!, typeName));
+        SetProperty(hollow, "Cell", cell);
+        SetProperty(hollow, "TargetCell", cell);
+        SetProperty(hollow, "PreviousCell", cell);
+        SetProperty(hollow, "VisualCell", visualCell);
+        SetProperty(hollow, "PreviousVisualCell", visualCell);
+        SetProperty(hollow, "MoveFrom", visualCell);
+        SetProperty(hollow, "MoveTo", visualCell);
+        SetProperty(hollow, "MoveProgress", 1f);
+
+        if (triangleMembers is not { Count: > 0 }) return hollow;
+        SetProperty(hollow, "TriangleSplit", true);
+        var memberType = gameAssembly.GetType("Dust.TriangleMember", true)!;
+        var members = (IList)Property<object>(hollow, "TriangleMembers");
+        for (var index = 0; index < triangleMembers.Count; index++)
+        {
+            var position = triangleMembers[index];
+            var memberCell = new Point(
+                (int)MathF.Round(position.X),
+                (int)MathF.Round(position.Y));
+            var member = Activator.CreateInstance(memberType)!;
+            SetProperty(member, "Index", index);
+            SetProperty(member, "Cell", memberCell);
+            SetProperty(member, "TargetCell", memberCell);
+            SetProperty(member, "PreviousCell", memberCell);
+            SetProperty(member, "VisualCell", position);
+            SetProperty(member, "PreviousVisualCell", position);
+            SetProperty(member, "MoveFrom", position);
+            SetProperty(member, "MoveTo", position);
+            SetProperty(member, "MoveProgress", 1f);
+            members.Add(member);
+        }
+        return hollow;
+    }
+
+    private static object CreateTestSentry(
+        Assembly gameAssembly,
+        Point cell,
+        string phaseName)
+    {
+        var sentry = Activator.CreateInstance(
+            gameAssembly.GetType("Dust.Sentry", true)!)!;
+        SetProperty(sentry, "Cell", cell);
+        SetProperty(sentry, "PreviousCell", cell);
+        SetProperty(sentry, "Phase", Enum.Parse(
+            gameAssembly.GetType("Dust.SentryPhase", true)!, phaseName));
+        return sentry;
     }
 
     private static object FieldObject(Type type, object instance, string name) =>

@@ -4,7 +4,6 @@ internal sealed partial class GameForm
 {
     private int _framePatchInventory;
     private int _reconstructionGelInventory;
-    private bool _shopProtectionArmed;
     private bool _inventoryOpen;
     private int _inventorySelection;
     private DateTime _inventoryOpenedAt;
@@ -22,6 +21,9 @@ internal sealed partial class GameForm
         _settings.Progression.EquippedPerks.Any(id =>
             ProgressionCatalog.TryGetPerk(id, out var definition) &&
             definition.Activation == PerkActivation.Space);
+
+    private bool HasAegisTarget =>
+        _hollows.Count > 0 || _sentries.Any(sentry => sentry.Phase != SentryPhase.Buried);
 
     private int InventoryCount(ShopItemKind kind) => kind switch
     {
@@ -52,7 +54,6 @@ internal sealed partial class GameForm
         _framePatchInventory = 0;
         _reconstructionGelInventory = 0;
         _shopProtectionCharges = 0;
-        _shopProtectionArmed = false;
         ResetInventoryOverlay();
     }
 
@@ -191,20 +192,15 @@ internal sealed partial class GameForm
     }
 
     /// <summary>
-    /// Arms a carried defensive fuse. Space owns this action when no active perk
-    /// is fitted; otherwise the active perk retains Space and the fuse moves to J.
+    /// Discharges a carried defensive fuse into the nearest hostile. Space owns
+    /// this action when no active perk is fitted; otherwise the active perk
+    /// retains Space and the fuse moves to J.
     /// </summary>
     private bool TryActivateDefensiveItem()
     {
         if (_mode != ScreenMode.Playing || _hitEffect > 0 || _pendingWin ||
             IsOnlineGameplayActive && _onlineLocalDefeated)
             return true;
-        if (_shopProtectionArmed)
-        {
-            SetPerkNotice("AEGIS WARD ALREADY ARMED");
-            _audio.Play(AudioCue.Select);
-            return true;
-        }
         if (_shopProtectionCharges <= 0)
         {
             SetPerkNotice("NO AEGIS FUSE IN INVENTORY");
@@ -213,11 +209,79 @@ internal sealed partial class GameForm
         }
         if (RelayOnlineDefensiveItemActivation()) return true;
 
+        if (!TryDestroyNearestEnemy(_visualCell, out var targetName))
+        {
+            SetPerkNotice("AEGIS DISCHARGE / NO HOSTILE SIGNAL");
+            _audio.Play(AudioCue.Select);
+            return true;
+        }
+
         _shopProtectionCharges--;
-        _shopProtectionArmed = true;
-        SetPerkNotice("AEGIS WARD ARMED / NEXT HIT NULL");
+        if (IsOnlineSimulationHost) _onlineWorldRevision++;
+        SetPerkNotice($"AEGIS DISCHARGE / {targetName} ERASED");
         _audio.Play(AudioCue.Confirm);
         return true;
+    }
+
+    /// <summary>
+    /// Removes exactly one target using stable roster order as the tie-breaker.
+    /// A split Triangle is measured from its nearest independently simulated
+    /// member, but destroying any member erases the complete Triangle entity.
+    /// Fully buried Sentries have no exposed body and cannot be acquired.
+    /// </summary>
+    private bool TryDestroyNearestEnemy(PointF origin, out string targetName)
+    {
+        Hollow? nearestHollow = null;
+        Sentry? nearestSentry = null;
+        var nearestDistanceSquared = float.MaxValue;
+
+        foreach (var hollow in _hollows)
+        {
+            var distanceSquared = AegisDistanceSquared(hollow, origin);
+            if (distanceSquared >= nearestDistanceSquared) continue;
+            nearestDistanceSquared = distanceSquared;
+            nearestHollow = hollow;
+            nearestSentry = null;
+        }
+
+        foreach (var sentry in _sentries)
+        {
+            if (sentry.Phase == SentryPhase.Buried) continue;
+            var distanceSquared = PerkDistanceSquared(sentry.Cell, origin);
+            if (distanceSquared >= nearestDistanceSquared) continue;
+            nearestDistanceSquared = distanceSquared;
+            nearestHollow = null;
+            nearestSentry = sentry;
+        }
+
+        if (nearestHollow is not null)
+        {
+            _hollows.Remove(nearestHollow);
+            targetName = nearestHollow.Type.ToString().ToUpperInvariant();
+            return true;
+        }
+        if (nearestSentry is not null)
+        {
+            _sentries.Remove(nearestSentry);
+            targetName = "SENTRY";
+            return true;
+        }
+
+        targetName = string.Empty;
+        return false;
+    }
+
+    private static float AegisDistanceSquared(Hollow hollow, PointF origin)
+    {
+        if (hollow.Type != HollowType.Triangle || !hollow.TriangleSplit ||
+            hollow.TriangleMembers.Count == 0)
+            return PerkDistanceSquared(hollow.VisualCell, origin);
+
+        var nearest = float.MaxValue;
+        foreach (var member in hollow.TriangleMembers)
+            nearest = Math.Min(nearest,
+                PerkDistanceSquared(member.VisualCell, origin));
+        return nearest;
     }
 
     private void HandleInventoryMouseMove(PointF hit)

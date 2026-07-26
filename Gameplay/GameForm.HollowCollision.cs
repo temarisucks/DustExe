@@ -62,7 +62,6 @@ internal sealed partial class GameForm
 
     private void BeginHollowHit(int damage = 1, bool causedByHollow = true)
     {
-        if (TryConsumeShopProtection()) return;
         var wasCarryingCargo = _cargoItems.Any(item =>
             IsOnlineGameplayActive
                 ? item.CarrierPlayerId == _onlinePlayerId

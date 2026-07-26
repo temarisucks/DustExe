@@ -151,12 +151,10 @@ internal sealed partial class GameForm
         LabFont.Draw(g, "03", rightX - 1, _mazeRect.Y + 50, 1, C.Oxide, LabTextAlign.Right);
 
         if (_shopProtectionCharges > 0 || _framePatchInventory > 0 ||
-            _reconstructionGelInventory > 0 || _shopProtectionArmed)
+            _reconstructionGelInventory > 0)
         {
             var supplies = $"PATCH {_framePatchInventory:00}  GEL {_reconstructionGelInventory:00}  " +
-                           (_shopProtectionArmed
-                               ? "AEGIS ARMED"
-                               : $"AEGIS {_shopProtectionCharges:00}");
+                           $"AEGIS {_shopProtectionCharges:00}";
             LabFont.Draw(g, supplies, _mazeRect.X + _mazeRect.Width / 2,
                 _mazeRect.Bottom - 23, 1, C.Signal, LabTextAlign.Center);
         }

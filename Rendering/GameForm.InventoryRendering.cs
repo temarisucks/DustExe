@@ -74,9 +74,7 @@ internal sealed partial class GameForm
         {
             "RESTORES 01 INTEGRITY",
             "RESTORES UP TO 02 INTEGRITY",
-            _shopProtectionArmed
-                ? "WARD ARMED / NEXT IMPACT NULL"
-                : $"ARM CHANNEL / {(HasActivePerkEquipped ? "J" : "SPACE")}"
+            $"ERASES NEAREST HOSTILE / {(HasActivePerkEquipped ? "J" : "SPACE")}"
         };
 
         for (var index = 0; index < _inventoryRows.Length; index++)
@@ -102,7 +100,7 @@ internal sealed partial class GameForm
             LabFont.Draw(g, names[index], row.X + 94, row.Y + 17, 2,
                 InventoryCount(kinds[index]) > 0 ? C.Bone : C.Steel);
             LabFont.Draw(g, notes[index], row.X + 94, row.Y + 55, 1,
-                index == 2 && _shopProtectionArmed ? C.Signal : C.Sick);
+                C.Sick);
             LabFont.Draw(g, $"X{InventoryCount(kinds[index]):00}",
                 row.Right - 22, row.Y + 35, 2,
                 InventoryCount(kinds[index]) > 0 ? C.Signal : C.Steel,
@@ -115,12 +113,12 @@ internal sealed partial class GameForm
         {
             0 => _framePatchInventory > 0 && _damageTaken > 0,
             1 => _reconstructionGelInventory > 0 && _damageTaken > 0,
-            _ => _shopProtectionCharges > 0 && !_shopProtectionArmed
+            _ => _shopProtectionCharges > 0 && HasAegisTarget
         };
         DrawCutPanel(g, _inventoryUseButton,
             usable ? Color.FromArgb(51, 52, 38) : Color.FromArgb(18, 23, 22),
             _hoverInventoryUse ? C.Signal : usable ? C.Sick : C.Steel, 9, 3);
-        LabFont.Draw(g, _inventorySelection == 2 ? "ARM SELECTED" : "USE SELECTED",
+        LabFont.Draw(g, _inventorySelection == 2 ? "DISCHARGE" : "USE SELECTED",
             _inventoryUseButton.X + _inventoryUseButton.Width / 2,
             _inventoryUseButton.Y + 19, 2,
             usable ? C.Bone : C.Steel, LabTextAlign.Center);

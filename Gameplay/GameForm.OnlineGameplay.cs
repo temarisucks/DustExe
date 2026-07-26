@@ -7,7 +7,7 @@ namespace Dust;
 
 internal sealed partial class GameForm
 {
-    private const int OnlineGameplayProtocolVersion = 4;
+    private const int OnlineGameplayProtocolVersion = 5;
     private const float OnlineSnapshotInterval = .09f;
     private static readonly TimeSpan OnlineSnapshotSendTimeout =
         TimeSpan.FromSeconds(1.5);
@@ -777,8 +777,7 @@ internal sealed partial class GameForm
         player.AccountCredits = Math.Clamp(
             LongProperty(body, "accountCredits"), 0, 1_000_000_000_000L);
         // Run supplies are host-owned state. Appearance packets may describe
-        // the airframe and unlocked loadout, but cannot mint healing stock or
-        // arrive with a free ward already armed.
+        // the airframe and unlocked loadout, but cannot mint carried stock.
         player.AppearanceReady = true;
         player.EquippedPerks.Clear();
         if (!TryProperty(body, "equippedPerks", out var perks) ||
@@ -850,7 +849,7 @@ internal sealed partial class GameForm
                 player.ShopProtectionCharges = Math.Min(99,
                     player.ShopProtectionCharges + 1);
                 SetOnlineShopReply(player,
-                    "Fuse transferred. Arm it before the dark reaches you.",
+                    "Fuse transferred. Point nowhere. It will choose what dies.",
                     AudioCue.Confirm);
                 break;
         }
@@ -890,25 +889,28 @@ internal sealed partial class GameForm
             AudioCue.Confirm);
     }
 
-    private static void ResolveOnlineDefensiveItemActivation(
+    private void ResolveOnlineDefensiveItemActivation(
         OnlineRemotePlayer player)
     {
         if (!player.Connected || player.Defeated || player.Extracted ||
             player.InShop || !player.AppearanceReady)
             return;
-        if (player.ShopProtectionArmed)
-        {
-            SetOnlineShopReply(player, "AEGIS WARD ALREADY ARMED", AudioCue.Select);
-            return;
-        }
         if (player.ShopProtectionCharges <= 0)
         {
             SetOnlineShopReply(player, "NO AEGIS FUSE IN INVENTORY", AudioCue.Select);
             return;
         }
+
+        if (!TryDestroyNearestEnemy(player.VisualCell, out var targetName))
+        {
+            SetOnlineShopReply(player,
+                "AEGIS DISCHARGE / NO HOSTILE SIGNAL", AudioCue.Select);
+            return;
+        }
+
         player.ShopProtectionCharges--;
-        player.ShopProtectionArmed = true;
-        SetOnlineShopReply(player, "AEGIS WARD ARMED / NEXT HIT NULL", AudioCue.Confirm);
+        SetOnlineShopReply(player,
+            $"AEGIS DISCHARGE / {targetName} ERASED", AudioCue.Confirm);
     }
 
     private void ResolveOnlineShopSale(OnlineRemotePlayer player, int kindValue)
@@ -1207,15 +1209,6 @@ internal sealed partial class GameForm
     {
         if (player.Invulnerability > 0 || player.Defeated || player.InShop ||
             !player.Connected) return;
-        if (player.ShopProtectionArmed)
-        {
-            player.ShopProtectionArmed = false;
-            player.Invulnerability = 1.25f;
-            player.ShopTransactionRevision++;
-            player.ShopMessage = "AEGIS FUSE SPENT / DAMAGE NULL";
-            player.ShopCue = (int)AudioCue.Confirm;
-            return;
-        }
         DropOnlineCargo(player);
         damage = Math.Max(1, damage);
         player.Damage += damage;
@@ -1446,6 +1439,7 @@ internal sealed partial class GameForm
 
         return new OnlineWorldSnapshot
         {
+            ProtocolVersion = OnlineGameplayProtocolVersion,
             Tick = _onlineSimulationTick,
             WorldRevision = ++_onlineWorldRevision,
             AuthorityRevision = _onlineAuthorityRevision,
@@ -1668,7 +1662,6 @@ internal sealed partial class GameForm
             FramePatchInventory = _framePatchInventory,
             ReconstructionGelInventory = _reconstructionGelInventory,
             ShopProtectionCharges = _shopProtectionCharges,
-            ShopProtectionArmed = _shopProtectionArmed,
             ShopTransactionRevision = _onlineLastAppliedShopRevision
         };
     }
@@ -1720,7 +1713,6 @@ internal sealed partial class GameForm
             FramePatchInventory = player.FramePatchInventory,
             ReconstructionGelInventory = player.ReconstructionGelInventory,
             ShopProtectionCharges = player.ShopProtectionCharges,
-            ShopProtectionArmed = player.ShopProtectionArmed,
             ShopTransactionRevision = player.ShopTransactionRevision,
             ShopMessage = player.ShopMessage,
             ShopCue = player.ShopCue
@@ -1818,7 +1810,6 @@ internal sealed partial class GameForm
             _reconstructionGelInventory = Math.Clamp(
                 snapshot.ReconstructionGelInventory, 0, 99);
             _shopProtectionCharges = Math.Max(0, snapshot.ShopProtectionCharges);
-            _shopProtectionArmed = snapshot.ShopProtectionArmed;
             if (_mode == ScreenMode.Shop && !string.IsNullOrWhiteSpace(snapshot.ShopMessage))
                 StartShopDialogue(snapshot.ShopMessage);
             else if (!string.IsNullOrWhiteSpace(snapshot.ShopMessage))
@@ -1931,7 +1922,6 @@ internal sealed partial class GameForm
         player.ReconstructionGelInventory = Math.Clamp(
             snapshot.ReconstructionGelInventory, 0, 99);
         player.ShopProtectionCharges = Math.Max(0, snapshot.ShopProtectionCharges);
-        player.ShopProtectionArmed = snapshot.ShopProtectionArmed;
         player.ShopTransactionRevision = Math.Max(
             player.ShopTransactionRevision, snapshot.ShopTransactionRevision);
         player.ShopMessage = snapshot.ShopMessage;

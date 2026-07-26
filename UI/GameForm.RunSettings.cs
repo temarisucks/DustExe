@@ -60,11 +60,11 @@ internal sealed partial class GameForm
         }
         else if (e.KeyCode is Keys.A or Keys.Left)
         {
-            AdjustRunSettingsSelection(-1);
+            MoveRunSettingsHorizontal(-1);
         }
         else if (e.KeyCode is Keys.D or Keys.Right)
         {
-            AdjustRunSettingsSelection(1);
+            MoveRunSettingsHorizontal(1);
         }
         else if (e.KeyCode is Keys.Enter or Keys.Space)
         {
@@ -95,6 +95,32 @@ internal sealed partial class GameForm
                 10 => 12,
                 >= 3 and <= 8 => _runSettingsSelection + 1,
                 9 => 11,
+                _ => _runSettingsSelection
+            };
+        if (next == _runSettingsSelection) return;
+        _runSettingsSelection = next;
+        _audio.Play(AudioCue.Select);
+    }
+
+    private void MoveRunSettingsHorizontal(int direction)
+    {
+        var next = direction < 0
+            ? _runSettingsSelection switch
+            {
+                3 or 4 => 0,
+                5 or 6 => 1,
+                7 or 8 => 2,
+                9 => 10,
+                11 => 12,
+                _ => _runSettingsSelection
+            }
+            : _runSettingsSelection switch
+            {
+                0 => 4,
+                1 => 6,
+                2 => 8,
+                10 => 9,
+                12 => 11,
                 _ => _runSettingsSelection
             };
         if (next == _runSettingsSelection) return;

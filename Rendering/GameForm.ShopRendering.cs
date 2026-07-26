@@ -1413,14 +1413,14 @@ internal sealed partial class GameForm
             LabFont.Draw(g, "THE KIOSK KNOWS YOUR CHASSIS", rect.X + 24, rect.Y + 24, 2, C.Bone);
             LabFont.Draw(g, "SAVED AND FIELD CREDITS ARE BOTH SPENDABLE.", rect.X + 24, rect.Y + 75, 1, C.Sick);
             LabFont.Draw(g, "ROOM SALVAGE REMAINS INVENTORY UNTIL SOLD.", rect.X + 24, rect.Y + 103, 1, C.Sick);
-            LabFont.Draw(g, "EXCESS REPAIR STOCK BANKS FOR THE NEXT HIT.", rect.X + 24, rect.Y + 131, 1, C.Sick);
-            LabFont.Draw(g, "AEGIS FUSES CANCEL ONE FUTURE HIT.", rect.X + 24, rect.Y + 159, 1, C.Sick);
+            LabFont.Draw(g, "PATCHES AND GEL WAIT IN INVENTORY UNTIL USED.", rect.X + 24, rect.Y + 131, 1, C.Sick);
+            LabFont.Draw(g, "AEGIS ERASES THE NEAREST EXPOSED HOSTILE.", rect.X + 24, rect.Y + 159, 1, C.Sick);
             using var line = new Pen(Color.FromArgb(95, C.Steel), 2);
             g.DrawLine(line, rect.X + 24, rect.Y + 202, rect.Right - 24, rect.Y + 202);
             LabFont.Draw(g, $"FRAME DAMAGE  {_damageTaken:00}/{GetMaximumHealth():00}", rect.X + 24, rect.Y + 229, 2,
                 _damageTaken > 0 ? C.Oxide : C.Bone);
-            LabFont.Draw(g, $"PATCH {_framePatchInventory:00}   GEL {_reconstructionGelInventory:00}   WARD {_shopProtectionCharges:00}", rect.X + 24, rect.Y + 278, 2, C.Signal);
-            LabFont.Draw(g, $"SALVAGE  {SellInventory().Sum(item => item.Count):00}    {(_shopProtectionArmed ? "WARD ARMED" : "WARD SAFE")}",
+            LabFont.Draw(g, $"PATCH {_framePatchInventory:00}   GEL {_reconstructionGelInventory:00}   AEGIS {_shopProtectionCharges:00}", rect.X + 24, rect.Y + 278, 2, C.Signal);
+            LabFont.Draw(g, $"SALVAGE  {SellInventory().Sum(item => item.Count):00}    AEGIS {(_shopProtectionCharges > 0 ? "READY" : "EMPTY")}",
                 rect.X + 24, rect.Y + 327, 2, C.Bone);
             return;
         }
